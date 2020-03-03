@@ -12,6 +12,9 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/build/bin)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_executable(interpreter
-    src/main.cpp
+  src/main.cpp
+  src/aliases.hpp
+  src/token.hpp
+  src/token.cpp
 )
 target_link_libraries(interpreter)
