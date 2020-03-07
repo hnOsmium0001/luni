@@ -1,7 +1,7 @@
 #include "token.hpp"
+
 #include <regex>
 #include <unordered_set>
-#include <variant>
 
 namespace luni {
 
@@ -29,19 +29,19 @@ auto TokenStreamView::Next() -> std::optional<const Token*> {
 
 class PSBase {
  public:
-  static auto CreateFrom(char32_t c) -> std::optional<PSBase> {
+  static auto CreateFrom(char c) -> std::optional<PSBase> {
     static auto ps = PSEmpty{};
     return ps.Feed(nullptr, c);
   }
 
-  virtual auto Feed(TokenStream* stream, char32_t c) -> std::optional<PSBase> {
+  virtual auto Feed(TokenStream* stream, char c) -> std::optional<PSBase> {
     throw std::runtime_error("Base method must be overriden");
   }
 };
 
 class PSEmpty : public PSBase {
  public:
-  auto Feed(TokenStream* stream, char32_t c) -> std::optional<PSBase> override {
+  auto Feed(TokenStream* stream, char c) -> std::optional<PSBase> override {
     // Character voided
   }
 };
@@ -57,7 +57,7 @@ class PSIdentifier : public PSBase {
   std::string builder;
 
  public:
-  auto Feed(TokenStream* stream, char32_t c) -> std::optional<PSBase> override {
+  auto Feed(TokenStream* stream, char c) -> std::optional<PSBase> override {
     if (std::regex_match(std::string{c}, identifierMatcher)) {
       builder.append(c);
       if (keywords.find(builder) != keywords.end()) {
@@ -74,22 +74,20 @@ static const std::unordered_set<std::string> operators{
     "+", "-", "*", "/", "%", "^", "#", "==", "~=", "<=", ">=", "<",  ">",
     "=", "(", ")", "{", "}", "[", "]", ";",  ":",  ",",  ".",  "..", "...",
 };
-static const std::unordered_set<char32_t> operatorBeginnings =
-    std::invoke([]() {
-      auto result = std::unordered_set<char32_t>{};
-      for (const auto& oper : operators) {
-        // TODO utf8 proper way
-        result.insert(*oper.begin());
-      }
-      return result;
-    });
+static const std::unordered_set<char> operatorBeginnings = std::invoke([]() {
+  auto result = std::unordered_set<char>{};
+  for (const auto& oper : operators) {
+    result.insert(oper[0]);
+  }
+  return result;
+});
 
 class PSOperator : public PSBase {
  private:
   std::string builder;
 
  public:
-  auto Feed(TokenStream* stream, char32_t c) -> std::optional<PSBase> override {
+  auto Feed(TokenStream* stream, char c) -> std::optional<PSBase> override {
     if (operatorBeginnings.find(c) != operatorBeginnings.end()) {
       builder.append(c);
       return {};
@@ -105,7 +103,7 @@ static const std::string blockCommentBeg = "--[";
 static const std::string blockCommentEnd = "--]";
 class PSComment : public PSBase {
  public:
-  auto Feed(TokenStream* stream, char32_t c) -> std::optional<PSBase> override {
+  auto Feed(TokenStream* stream, char c) -> std::optional<PSBase> override {
     if (c == '\n')
       return PSEmpty{};
     else
@@ -117,7 +115,7 @@ class PSBlockComment : public PSBase {
   u32 stage;
 
  public:
-  auto Feed(TokenStream* stream, char32_t c) -> std::optional<PSBase> override {
+  auto Feed(TokenStream* stream, char c) -> std::optional<PSBase> override {
     switch (stage) {
       case 0: {
         if (c == '-')
@@ -149,8 +147,7 @@ class PSBlockComment : public PSBase {
 auto ParseText(TokenStream* stream, std::string& text) -> void {
   PSBase st = PSEmpty{};
 
-  // TODO utf8 proper way
-  for (char32_t c : text) {
+  for (char c : text) {
     auto res = st.Feed(stream, c);
     if (res.has_value()) {
       st = std::move(*res);
