@@ -24,8 +24,8 @@ class TokenStream {
  public:
   auto PushToken(Token token) -> void;
   auto PollToken() -> Token;
-  auto Front() const -> const Token&;
-  auto View() const -> TokenStreamView;
+  auto Front() -> const Token& const;
+  auto View() -> TokenStreamView const;
 
   friend class TokenStreamView;
 };

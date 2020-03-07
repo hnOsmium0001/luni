@@ -1,5 +1,4 @@
 #include "token.hpp"
-#include <regex>
 #include <unordered_set>
 #include <variant>
 
@@ -13,8 +12,8 @@ auto TokenStream::PollToken() -> Token {
   tokens.pop_front();
   return t;
 }
-auto TokenStream::Front() const -> const Token& { return tokens.front(); }
-auto TokenStream::View() const -> TokenStreamView { return {this, 0}; }
+auto TokenStream::Front() -> const Token& const { return tokens.front(); }
+auto TokenStream::View() -> TokenStreamView const { return {this, 0}; }
 
 TokenStreamView::TokenStreamView(const TokenStream* data, usize start)
     : data_{data}, ptr_{start} {
@@ -29,11 +28,9 @@ auto TokenStreamView::Next() -> std::optional<const Token*> {
 
 class PSBase {
  public:
-  static auto CreateFrom(char32_t c) -> std::optional<PSBase> {
-    static auto ps = PSEmpty{};
-    return ps.Feed(nullptr, c);
-  }
-
+  PSBase() = default;
+  PSBase(const PSBase&) = delete;
+  PSBase(PSBase&&) = default;
   virtual auto Feed(TokenStream* stream, char32_t c) -> std::optional<PSBase> {
     throw std::runtime_error("Base method must be overriden");
   }
@@ -46,27 +43,28 @@ class PSEmpty : public PSBase {
   }
 };
 
-static const std::unordered_set<std::string> keywords{
-    "and", "break",    "do",     "else", "elseif", "end",   "false",
-    "for", "function", "if",     "in",   "local",  "nil",   "not",
-    "or",  "repeat",   "return", "then", "true",   "until", "while",
-};
-static const std::regex identifierMatcher("[a-zA-Z_][0-9a-zA-Z_]*");
 class PSIdentifier : public PSBase {
  private:
   std::string builder;
 
  public:
   auto Feed(TokenStream* stream, char32_t c) -> std::optional<PSBase> override {
-    if (std::regex_match(std::string{c}, identifierMatcher)) {
-      builder.append(c);
-      if (keywords.find(builder) != keywords.end()) {
-        stream->PushToken(Token{std::move(builder)});
-      }
-      return {};
-    } else {
-      return PSBase::CreateFrom(c);
-    }
+    // TODO
+  }
+};
+
+static const std::unordered_set<std::string> keywords{
+    "and", "break",    "do",     "else", "elseif", "end",   "false",
+    "for", "function", "if",     "in",   "local",  "nil",   "not",
+    "or",  "repeat",   "return", "then", "true",   "until", "while",
+};
+class PSKeyword : public PSBase {
+ private:
+  std::string builder;
+
+ public:
+  auto Feed(TokenStream* stream, char32_t c) -> std::optional<PSBase> override {
+    // TODO
   }
 };
 
@@ -90,13 +88,7 @@ class PSOperator : public PSBase {
 
  public:
   auto Feed(TokenStream* stream, char32_t c) -> std::optional<PSBase> override {
-    if (operatorBeginnings.find(c) != operatorBeginnings.end()) {
-      builder.append(c);
-      return {};
-    } else {
-      stream->PushToken(Token{std::move(builder)});
-      return PSEmpty::CreateFrom(c);
-    }
+    // TODO
   }
 };
 
@@ -106,10 +98,7 @@ static const std::string blockCommentEnd = "--]";
 class PSComment : public PSBase {
  public:
   auto Feed(TokenStream* stream, char32_t c) -> std::optional<PSBase> override {
-    if (c == '\n')
-      return PSEmpty{};
-    else
-      return {};
+    return c == '\n' ? PSEmpty{} : std::nullopt;
   }
 };
 class PSBlockComment : public PSBase {
@@ -133,28 +122,34 @@ class PSBlockComment : public PSBase {
           stage = 0;
         return {};
       }
-      case 2: {
+      case 2:
         if (c == ']')
           return PSEmpty{};
         else
           stage = 0;
         return {};
-      }
       default:
         return {};
     }
   }
 };
 
+using ParseState = std::variant<PSEmpty, PSIdentifier, PSKeyword, PSOperator,
+                                PSComment, PSBlockComment>;
+
 auto ParseText(TokenStream* stream, std::string& text) -> void {
-  PSBase st = PSEmpty{};
+  ParseState st = PSEmpty{};
 
   // TODO utf8 proper way
   for (char32_t c : text) {
-    auto res = st.Feed(stream, c);
-    if (res.has_value()) {
-      st = std::move(*res);
-    }
+    std::visit(
+        [&st, stream, c](auto&& v) {
+          std::optional<PSBase> res = v.Feed(stream, c);
+          if (res.has_value()) {
+            st = *res;
+          }
+        },
+        st);
   }
 }
 
