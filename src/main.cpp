@@ -8,6 +8,9 @@
 #include <vector>
 
 #include "aliases.hpp"
+#include "token.hpp"
+
+using namespace LuNI;
 
 static inline auto ltrim(std::string &s) -> void {
   s.erase(s.begin(), std::find_if(s.begin(), s.end(),

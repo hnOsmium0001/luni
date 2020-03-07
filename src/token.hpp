@@ -4,7 +4,7 @@
 #include <string>
 #include "aliases.hpp"
 
-namespace luni {
+namespace LuNI {
 
 // Existance declarations
 class Token;
@@ -43,4 +43,4 @@ class TokenStreamView {
 
 auto ParseText(TokenStream* stream, std::string& text) -> void;
 
-}  // namespace luni
+}  // namespace LuNI

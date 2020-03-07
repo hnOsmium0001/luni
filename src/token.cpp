@@ -3,7 +3,7 @@
 #include <regex>
 #include <unordered_set>
 
-namespace luni {
+namespace LuNI {
 
 auto TokenStream::PushToken(Token token) -> void {
   tokens.push_back(std::move(token));
@@ -27,49 +27,12 @@ auto TokenStreamView::Next() -> std::optional<const Token*> {
     return &data_->tokens.at(ptr_++);
 }
 
-class PSBase {
- public:
-  static auto CreateFrom(char c) -> std::optional<PSBase> {
-    static auto ps = PSEmpty{};
-    return ps.Feed(nullptr, c);
-  }
-
-  virtual auto Feed(TokenStream* stream, char c) -> std::optional<PSBase> {
-    throw std::runtime_error("Base method must be overriden");
-  }
-};
-
-class PSEmpty : public PSBase {
- public:
-  auto Feed(TokenStream* stream, char c) -> std::optional<PSBase> override {
-    // Character voided
-  }
-};
-
 static const std::unordered_set<std::string> keywords{
     "and", "break",    "do",     "else", "elseif", "end",   "false",
     "for", "function", "if",     "in",   "local",  "nil",   "not",
     "or",  "repeat",   "return", "then", "true",   "until", "while",
 };
 static const std::regex identifierMatcher("[a-zA-Z_][0-9a-zA-Z_]*");
-class PSIdentifier : public PSBase {
- private:
-  std::string builder;
-
- public:
-  auto Feed(TokenStream* stream, char c) -> std::optional<PSBase> override {
-    if (std::regex_match(std::string{c}, identifierMatcher)) {
-      builder.append(c);
-      if (keywords.find(builder) != keywords.end()) {
-        stream->PushToken(Token{std::move(builder)});
-      }
-      return {};
-    } else {
-      return PSBase::CreateFrom(c);
-    }
-  }
-};
-
 static const std::unordered_set<std::string> operators{
     "+", "-", "*", "/", "%", "^", "#", "==", "~=", "<=", ">=", "<",  ">",
     "=", "(", ")", "{", "}", "[", "]", ";",  ":",  ",",  ".",  "..", "...",
@@ -81,31 +44,53 @@ static const std::unordered_set<char> operatorBeginnings = std::invoke([]() {
   }
   return result;
 });
+static const std::string lineComment = "--";
+static const std::string blockCommentBeg = "--[";
+static const std::string blockCommentEnd = "--]";
 
-class PSOperator : public PSBase {
+// Fuck C++ there's no order bootstraping
+class PSBase;
+auto DecideFromNone(char c) -> std::optional<PSBase>;
+
+class PSBase {
+ public:
+  static auto CreateFrom(char c) -> std::optional<PSBase> {
+    static auto ps = PSBase{};
+    return ps.Feed(nullptr, c);
+  }
+
+  virtual auto Feed(TokenStream* stream, char c) -> std::optional<PSBase> {
+    return DecideFromNone(c);
+  }
+};
+
+class PSIdentifier : public PSBase {
  private:
   std::string builder;
 
  public:
+  PSIdentifier(char c) : builder{c} {}
+
   auto Feed(TokenStream* stream, char c) -> std::optional<PSBase> override {
-    if (operatorBeginnings.find(c) != operatorBeginnings.end()) {
-      builder.append(c);
+    if (std::regex_match(std::string{c}, identifierMatcher)) {
+      builder += c;
+      if (keywords.find(builder) != keywords.end()) {
+        stream->PushToken(Token{std::move(builder)});
+      }
       return {};
     } else {
-      stream->PushToken(Token{std::move(builder)});
-      return PSEmpty::CreateFrom(c);
+      return PSBase::CreateFrom(c);
     }
   }
 };
 
-static const std::string lineComment = "--";
-static const std::string blockCommentBeg = "--[";
-static const std::string blockCommentEnd = "--]";
+// Discarding parsing states
+// all inputs should be discarded until comment ends
 class PSComment : public PSBase {
  public:
   auto Feed(TokenStream* stream, char c) -> std::optional<PSBase> override {
     if (c == '\n')
-      return PSEmpty{};
+      return PSBase{};
     else
       return {};
   }
@@ -133,7 +118,7 @@ class PSBlockComment : public PSBase {
       }
       case 2: {
         if (c == ']')
-          return PSEmpty{};
+          return PSBase{};
         else
           stage = 0;
         return {};
@@ -144,8 +129,56 @@ class PSBlockComment : public PSBase {
   }
 };
 
+class PSOperator : public PSBase {
+ private:
+  std::string builder;
+
+ public:
+  PSOperator(char c) : builder{c} {}
+
+  auto Feed(TokenStream* stream, char c) -> std::optional<PSBase> override {
+    if (operatorBeginnings.find(c) != operatorBeginnings.end()) {
+      builder += c;
+      if (builder == lineComment)
+        return PSComment{};
+      else if (builder == blockCommentBeg)
+        return PSBlockComment{};
+      else
+        return {};
+    } else {
+      stream->PushToken(Token{std::move(builder)});
+      return PSBase::CreateFrom(c);
+    }
+  }
+};
+
+class PSString : public PSBase {
+ public:
+  std::string builder;
+
+  auto Feed(TokenStream* stream, char c) -> std::optional<PSBase> override {
+    if (c == '"') {
+      stream->PushToken(Token{std::move(builder)});
+      return PSBase{};
+    } else {
+      builder += c;
+      return {};
+    }
+  }
+};
+
+auto DecideFromNone(char c) -> std::optional<PSBase> {
+  if (std::regex_match(std::string{c}, identifierMatcher))
+    return PSIdentifier{c};
+  if (operatorBeginnings.find(c) != operatorBeginnings.end())
+    return PSOperator{c};
+  // String literal tokens doesn't include opening and closing quotation marks
+  if (c == '"') return PSString{};
+  return {};
+}
+
 auto ParseText(TokenStream* stream, std::string& text) -> void {
-  PSBase st = PSEmpty{};
+  auto st = PSBase{};
 
   for (char c : text) {
     auto res = st.Feed(stream, c);
@@ -155,4 +188,4 @@ auto ParseText(TokenStream* stream, std::string& text) -> void {
   }
 }
 
-}  // namespace luni
+}  // namespace LuNI

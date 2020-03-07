@@ -63,6 +63,24 @@
     "complex": "cpp",
     "ratio": "cpp",
     "set": "cpp",
-    "sstream": "cpp"
+    "sstream": "cpp",
+    "xstring": "cpp",
+    "list": "cpp",
+    "regex": "cpp",
+    "xfacet": "cpp",
+    "xhash": "cpp",
+    "xiosbase": "cpp",
+    "xlocale": "cpp",
+    "xlocbuf": "cpp",
+    "xlocinfo": "cpp",
+    "xlocmes": "cpp",
+    "xlocmon": "cpp",
+    "xlocnum": "cpp",
+    "xloctime": "cpp",
+    "xmemory": "cpp",
+    "xmemory0": "cpp",
+    "xstddef": "cpp",
+    "xtr1common": "cpp",
+    "xutility": "cpp"
   }
 }
