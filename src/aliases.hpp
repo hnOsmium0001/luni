@@ -10,4 +10,4 @@ using u16 = uint16_t;
 using u8 = uint8_t;
 using f32 = float;
 using f64 = double;
-using usize = std::size_t;
+using usize = size_t;

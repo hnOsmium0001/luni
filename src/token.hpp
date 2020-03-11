@@ -1,20 +1,23 @@
 #include <cstddef>
 #include <deque>
-#include <optional>
 #include <string>
 #include "aliases.hpp"
 
 namespace LuNI {
 
-// Existance declarations
-class Token;
-class TokenStream;
-class TokenStreamView;
+struct CharInfo {
+	u32 line;
+	u32 column;
+};
 
 class Token {
  public:
   std::string str;
+	CharInfo info; // Information about the beginning character of this token
 };
+
+class TokenStream;
+class TokenStreamView;
 
 class TokenStream {
  private:
@@ -32,15 +35,16 @@ class TokenStream {
 
 class TokenStreamView {
  public:
-  const TokenStream* data_;
-  usize ptr_;
-  u32 genSnapshot_;
+  const TokenStream& data;
+  usize ptr;
+  const u32 genSnapshot;
 
-  TokenStreamView(const TokenStream* data, usize start);
+  TokenStreamView(const TokenStream& dataIn, usize startIn);
 
-  auto Next() -> std::optional<const Token*>;
+  auto Next() -> const Token&;
+	auto Front() const -> const Token&;
 };
 
-auto ParseText(TokenStream* stream, std::string& text) -> void;
+auto ParseText(TokenStream& stream, std::string& text) -> void;
 
 }  // namespace LuNI
