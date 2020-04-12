@@ -1,5 +1,5 @@
 #include <iostream>
-#include <argparse.h>
+#include <argparse/argparse.hpp>
 #include "Util.hpp"
 
 i32 main(i32 argc, char* argv[]) {

@@ -33,3 +33,10 @@ template <typename Func, typename... Ts>
 auto Bind(Func&& func, const std::optional<Ts>&... opts) -> decltype(func((*opts)...)) {
 	return (... && opts) ? func((*opts)...) : std::nullopt;
 }
+
+
+namespace LuNI {
+
+
+
+} // namespace LuNI
