@@ -3,9 +3,20 @@
 #include <string>
 #include <optional>
 #include <vector>
+#include <fmt/format.h>
+#include <argparse/argparse.hpp>
 #include "Util.hpp"
 
 namespace LuNI {
+
+class LexingState;
+class TokenPos {
+public:
+	u32 line;
+	u32 column;
+
+	static auto CurrentPos(const LexingState& state) -> TokenPos;
+};
 
 enum class TokenType {
 	IDENTIFIER,
@@ -13,16 +24,18 @@ enum class TokenType {
 	OPERATOR,
 
 	// There is no comment tokens, comments are stripped out at the lexing stage
-	//COMMENT_BEGIN,
-	//MULTILINE_COMMENT_BEGIN,
-	//MULTILINE_COMMENT_END,
+	/*COMMENT_BEGIN,
+	MULTILINE_COMMENT_BEGIN,
+	MULTILINE_COMMENT_END,*/
 	
 	STRING_LITERAL,
+	MULTILINE_STRING_LITERAL,
 };
 
 class Token {
 public:
 	std::string text;
+	TokenPos pos;
 	TokenType type;
 };
 
@@ -32,6 +45,8 @@ public:
 private:
 	std::string src;
 	std::string::iterator ptr;
+	u32 currentLine = 0;
+	u32 currentColumn = 0;
 
 public:
 	LexingState(std::string src) noexcept;
@@ -54,8 +69,24 @@ public:
 	auto AddToken(Token token) -> void;
 	auto GetToken(usize i) -> Token&;
 	auto GetToken(usize i) const -> const Token&;
+
+	u32 line() const { return currentLine; }
+	u32 column() const { return currentColumn; }
 };
 
-auto LexInput(std::string text) -> LexingState;
+class Lexer {
+private:
+	argparse::ArgumentParser* program;
+
+public:
+	Lexer(argparse::ArgumentParser* program) noexcept;
+
+	auto DoLexing(std::string text) -> LexingState;
+};
 
 } // namespace LuNI
+
+template <> struct fmt::formatter<LuNI::TokenType>;
+std::ostream& operator<<(std::ostream& out, const LuNI::TokenType& type);
+template <> struct fmt::formatter<LuNI::TokenPos>;
+std::ostream& operator<<(std::ostream& out, const LuNI::TokenPos& pos);

@@ -4,12 +4,12 @@
 
 namespace LuNI {
 
-class Parser {
+class Interpreter {
 private:
 	argparse::ArgumentParser* program;
 
 public:
-	Parser(argparse::ArgumentParser* program) noexcept;
+	Interpreter(argparse::ArgumentParser* program) noexcept;
 };
 
 } // namespace LuNI

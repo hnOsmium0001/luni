@@ -3,9 +3,14 @@
 #include <algorithm>
 #include <regex>
 #include <unordered_set>
+#include <stdexcept>
 #include "Lexer.hpp"
 
 using namespace LuNI;
+
+auto TokenPos::CurrentPos(const LexingState &state) -> TokenPos {
+	return TokenPos{state.line(), state.column()};
+}
 
 LexingState::LexingState(std::string src) noexcept
 	: src{ std::move(src) }, ptr{ this->src.begin() } {
@@ -90,6 +95,10 @@ auto LexingState::GetToken(usize i) const -> const Token& {
 	return tokens[i];
 }
 
+Lexer::Lexer(argparse::ArgumentParser* program) noexcept
+	: program{ program } {
+}
+
 namespace {
 	static const std::unordered_set<std::string_view> keywords{
 		"and", "break",		 "do",		 "else", "elseif", "end",		"false",
@@ -106,11 +115,12 @@ namespace {
 	static const std::string_view blockCommentBeg = "--[[";
 	static const std::string_view blockCommentEnd = "--]]";
 
-	// These functions will assume the LexingState have at least one more char to go
 	auto TryLexIdentifier(LexingState& state) -> std::optional<Token> {
-		auto beginning = state.Peek().value();
+		auto beginning = state.Peek().value_or(' ');
 		if (!std::regex_match(std::string{beginning}, identifierBegin)) return {};
 		// We know this must be an identifier (or keyword) at this point
+		auto pos = TokenPos::CurrentPos(state);
+
 		std::string buf;
 		while (true) {
 			auto opt = state.Take();
@@ -122,19 +132,22 @@ namespace {
 				break;
 			}
 		}
-		return Token{std::move(buf), TokenType::IDENTIFIER};
+		return Token{std::move(buf), pos, TokenType::IDENTIFIER};
 	}
 
 	auto TryLexOperator(LexingState& state) -> std::optional<Token> {
 		// Iterate backwards to prevent shorter operators (e.g. ">") break the
 		// actual longer operator (e.g. ">="
-		for (usize i = 3; i >= 1; --i) {
-			auto opt = state.PeekSome(i);
+		// No need to worry about accidentally matching comments immediately after
+		// comments, no operators end eith a "-"
+		for (usize n = 3; n >= 1; --n) {
+			auto opt = state.PeekSome(n);
 			if (!opt) return {};
 			std::string_view view = *opt;
 			if (operators.find(view) != operators.end()) {
-				state.Advance(i);
-				return Token{std::string{view}, TokenType::OPERATOR};
+				auto pos = TokenPos::CurrentPos(state);
+				state.Advance(n);
+				return Token{std::string{view}, pos, TokenType::OPERATOR};
 			}
 		}
 		return {};
@@ -155,7 +168,6 @@ namespace {
 		return buf;
 	}
 	auto TryLexMultilineString(LexingState& state) -> std::string {
-		// TODO
 		//// Number of equal signs between the brackets
 		//u32 equals = 0;
 		//while (true) {
@@ -180,12 +192,15 @@ namespace {
 		return buf;
 	}
 	auto TryLexString(LexingState& state) -> std::optional<Token> {
-		auto first = state.Peek().value();
-		if (first == '"') {
-			return Token{TryLexSimpleString(state), TokenType::STRING_LITERAL};
+		if (state.Peek().value_or(' ') == '"') {
+			state.Advance();
+			auto pos = TokenPos::CurrentPos(state);
+			return Token{TryLexSimpleString(state), pos, TokenType::STRING_LITERAL};
 		}
-		if (first == '[') {
-			return Token{TryLexMultilineString(state), TokenType::STRING_LITERAL};
+		if (state.PeekSome(2).value_or("") == "[[") {
+			state.Advance(2);
+			auto pos = TokenPos::CurrentPos(state);
+			return Token{TryLexMultilineString(state), pos, TokenType::MULTILINE_STRING_LITERAL};
 		}
 		return {};
 	}
@@ -200,76 +215,138 @@ namespace {
 		}
 	}
 	auto TryLexMultilineComment(LexingState& state) -> void {
-		// TODO
-		//// Keep consuming input until we see a multiline comment end
-		//u32 stage = 0;
-		//while (true) {
-		//  auto opt = state.Take();
-		//  if (!opt) return true;
-		//  auto c = *opt;
-		//  switch (c) {
-		//    case '-':
-		//      ++stage;
-		//      break;
-		//    case ']':
-		//      // In case there is things like "--...--]" in the comment,
-		//      // stage will be above 2
-		//      if (stage >= 2) {
-		//        return;
-		//      }
-		//      break;
-		//    default:
-		//      stage = 0;
-		//      break;
-		//  }
-		//}
+		// Keep consuming input until we see a multiline comment end
+		u32 stage = 0;
+		while (true) {
+			auto opt = state.Take();
+			if (!opt) return;
+			auto c = *opt;
+
+			switch (c) {
+				case '-': {
+					if (stage < 2) ++stage;
+					break;
+				}
+				case ']': {
+					if (stage == 2 && stage < 4) {
+						++stage;
+					} else if (stage == 4) {
+						return;
+					}
+					break;
+				}
+				default: {
+					stage = 0;
+					break;
+				}
+			}
+		}
 	}
-	auto TryLexComments(LexingState& state) -> bool {
+	auto TryLexComments(LexingState& state) -> std::optional<TokenPos> {
 		auto first2 = state.PeekFull(2).value();
 		// block comment marks also starts with --
-		if (first2 != lineComment) return false;
+		if (first2 != lineComment) return {};
 		// From this point we know we have a comment
+		auto pos = TokenPos::CurrentPos(state);
+		state.Advance(2);
 
-		auto third = state.Peek(3);
-		if (third && *third == '[') {
+		auto next2 = state.PeekFull(2, 2);
+		if (next2 && *next2 == "[[") {
+			state.Advance(2);
+			TryLexMultilineComment(state);
 		} else {
 			TryLexLineComment(state);
 		}
-		return true;
+		return pos;
 	}
 }
-auto LexInput(std::string text) -> LexingState {
+auto Lexer::DoLexing(std::string text) -> LexingState {
+	auto verbose = (*program)["--verbose-lexing"] == true;
+
 	LexingState state{std::move(text)};
 	while (state.HasNext()) {
 		auto iden = TryLexIdentifier(state);
-		if (iden) {
+	if (iden) {
 			auto it = keywords.find(iden->text);
 			if (it != keywords.end()) iden->type = TokenType::KEYWORD;
+
+			if (verbose) {
+				fmt::print("Generated {} token \"{}\";\n\tstarting at {}",
+							iden->type == TokenType::KEYWORD ? "keyword" : "identifier",
+							iden->text,
+							iden->pos);
+			}
 			state.AddToken(std::move(*iden));
 			continue;
 		}
 
 		auto str = TryLexString(state);
 		if (str) {
+			if (verbose) {
+				fmt::print("Generated string literal token \"{}\";\n\tstarting at {}", str->text, str->pos);
+			}
 			state.AddToken(std::move(*str));
 			continue;
 		}
 
-		auto commentSuccess = TryLexComments(state);
-		if (commentSuccess) {
+		auto commentPos = TryLexComments(state);
+		if (commentPos) {
+			if (verbose) {
+				fmt::print("Discarded comments starting at {}", *commentPos);
+			}
 			continue;
 		}
 
 		auto oper = TryLexOperator(state);
 		if (oper) {
+			if (verbose) {
+				fmt::print("Generated operator token \"{}\";\n\tstarting at {}", oper->text, oper->pos);
+			}
 			state.AddToken(std::move(*oper));
 			continue;
 		}
 
 		if (std::isspace(state.Peek().value_or('\0'))) {
+			// No verbose output for this guy because no
 			state.Advance();
 			continue;
 		}
 	}
 	return state;
+}
+
+template <>
+struct fmt::formatter<LuNI::TokenType> {
+	constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+	template <typename FormatContext>
+	auto format(const LuNI::TokenType& type, FormatContext& ctx) {
+		using LuNI::TokenType;
+		switch (type) {
+			case TokenType::IDENTIFIER: return "identifier";
+			case TokenType::KEYWORD: return "keyword";
+			case TokenType::OPERATOR: return "operator";
+			case TokenType::STRING_LITERAL: return "string literal";
+			case TokenType::MULTILINE_STRING_LITERAL: return "multiline string literal";
+		}
+		throw std::runtime_error("Invalid token type");
+	}
+};
+std::ostream& operator<<(std::ostream& out, const TokenType& type) {
+	out << fmt::format("{}", type);
+	return out;
+}
+
+template <>
+struct fmt::formatter<LuNI::TokenPos> {
+	constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+	template <typename FormatContext>
+	auto format(const LuNI::TokenPos& pos, FormatContext& ctx) {
+		return format_to(ctx.out(), "{}:{}", pos.line, pos.column);
+	}
+};
+std::ostream& operator<<(std::ostream& out, const TokenPos& pos) {
+	out << fmt::format("{}:{}", pos.line, pos.column);
+	return out;
 }

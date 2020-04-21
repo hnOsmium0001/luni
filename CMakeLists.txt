@@ -10,14 +10,18 @@ include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
 conan_basic_setup()
 
 add_executable(luni
-	src/Util.hpp
-	src/Util.cpp
-	src/Lexer.hpp
-	src/Lexer.cpp
-	src/Parser.hpp
-	src/Parser.cpp
-	src/CodeGen.hpp
-	src/CodeGen.cpp
-	src/Main.cpp
+	main/Util.hpp
+	main/Util.cpp
+	main/Program.hpp
+	main/Program.cpp
+	main/Lexer.hpp
+	main/Lexer.cpp
+	main/Parser.hpp
+	main/Parser.cpp
+	main/CodeGen.hpp
+	main/CodeGen.cpp
+	main/Interpreter.hpp
+	main/Interpreter.cpp
+	main/Main.cpp
 )
 target_link_libraries(luni)
