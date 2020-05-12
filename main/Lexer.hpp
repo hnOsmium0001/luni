@@ -74,19 +74,38 @@ public:
 	u32 column() const { return currentColumn; }
 };
 
-class Lexer {
-private:
-	argparse::ArgumentParser* program;
-
-public:
-	Lexer(argparse::ArgumentParser* program) noexcept;
-
-	auto DoLexing(std::string text) -> LexingState;
-};
+auto DoLexing(
+	argparse::ArgumentParser* args,
+	const std::string& text
+) -> LexingState;
 
 } // namespace LuNI
 
-template <> struct fmt::formatter<LuNI::TokenType>;
-std::ostream& operator<<(std::ostream& out, const LuNI::TokenType& type);
-template <> struct fmt::formatter<LuNI::TokenPos>;
-std::ostream& operator<<(std::ostream& out, const LuNI::TokenPos& pos);
+template <>
+struct fmt::formatter<LuNI::TokenType> {
+	template <typename ParseContext>
+	constexpr auto parse(ParseContext& ctx) { return ctx.begin(); }
+
+	template <typename FormatContext>
+	auto format(const LuNI::TokenType& type, FormatContext& ctx) {
+		using LuNI::TokenType;
+		switch (type) {
+			case TokenType::IDENTIFIER: return format_to(ctx.out(), "identifier");
+			case TokenType::KEYWORD: return format_to(ctx.out(), "keyword");
+			case TokenType::OPERATOR: return format_to(ctx.out(), "operator");
+			case TokenType::STRING_LITERAL: return format_to(ctx.out(), "string literal");
+			case TokenType::MULTILINE_STRING_LITERAL: return format_to(ctx.out(), "multiline string literal");
+		}
+		throw std::runtime_error("Invalid token type");
+	}
+};
+
+template <>
+struct fmt::formatter<LuNI::TokenPos> {
+	constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+	template <typename FormatContext>
+	auto format(const LuNI::TokenPos& pos, FormatContext& ctx) {
+		return format_to(ctx.out(), "{}:{}", pos.line, pos.column);
+	}
+};

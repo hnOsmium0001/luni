@@ -1,15 +1,21 @@
 #pragma once
 
+#include <vector>
 #include <argparse/argparse.hpp>
+#include "Util.hpp"
+#include "Lexer.hpp"
 
 namespace LuNI {
 
-class Parser {
+class ParsingState {
 private:
-	argparse::ArgumentParser* program;
-
-public:
-	Parser(argparse::ArgumentParser* program) noexcept;
+	std::vector<StandardError> errors;
+	// TODO syntax tree
 };
+
+auto DoParsing(
+	argparse::ArgumentParser* args,
+	const LexingState& state
+) -> ParsingState;
 
 } // namespace LuNI

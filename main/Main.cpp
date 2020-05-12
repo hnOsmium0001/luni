@@ -1,11 +1,16 @@
 #include <iostream>
+#include <fstream>
+#include <sstream>
 #include <argparse/argparse.hpp>
 #include "Util.hpp"
 #include "Program.hpp"
 #include "Lexer.hpp"
 #include "Parser.hpp"
-#include "CodeGen.hpp"
 #include "Interpreter.hpp"
+
+using LuNI::Result;
+using LuNI::Err;
+using namespace LuNI::ErrorCodes;
 
 auto SetupArgParse() -> argparse::ArgumentParser {
 	auto program = argparse::ArgumentParser("LuNI Interpreter");
@@ -31,40 +36,57 @@ auto SetupArgParse() -> argparse::ArgumentParser {
 }
 
 auto ProgramFromSource(
-		std::string_view path,
-		LuNI::Lexer lexer,
-		LuNI::Parser parser,
-		LuNI::CodeGen codeGen
-) -> LuNI::BytecodeProgram {
+	argparse::ArgumentParser* args,
+	const std::string& path
+) -> Result<LuNI::BytecodeProgram, LuNI::StandardError> {
+	auto ifs = std::ifstream{path};
+	if (!ifs) {
+		return Err(INPUT_FILE_NOT_FOUND, fmt::format("Unable to find source file {}", path));
+	}
+	auto ifsBuf = std::stringstream{};
+	ifsBuf << ifs.rdbuf();
+	auto source = ifsBuf.str();
+
+	auto lex = LuNI::DoLexing(args, source);
+
 	// TODO
+	return LuNI::BytecodeProgram{};
 }
 
-auto ProgramFromInput(std::string_view path) -> LuNI::BytecodeProgram {
+auto ProgramFromInput(
+	argparse::ArgumentParser* args,
+	const std::string& path
+) -> Result<LuNI::BytecodeProgram, LuNI::StandardError> {
+	auto ifs = std::ifstream{path};
+	if (!ifs) {
+		return Err(INPUT_FILE_NOT_FOUND, fmt::format("Unable to find bytecode file {}", path));
+	}
+
 	// TODO
+	return LuNI::BytecodeProgram{};
 }
 
 int main(int argc, char* argv[]) {
-	auto program = SetupArgParse();
+	auto args = SetupArgParse();
 	try {
-		program.parse_args(argc, argv);
+		args.parse_args(argc, argv);
 	} catch (const std::runtime_error& err) {
 		std::cout << err.what() << '\n';
-		std::cout << program;
+		std::cout << args;
 		return -1;
 	}
 
-	LuNI::Lexer lexer(&program);
-	LuNI::Parser parser(&program);
-	LuNI::CodeGen codeGen(&program);
+	auto inputBytecode = args["--run-bytecode"] == true;
+	auto inputs = args.get<std::vector<std::string>>("inputs");
 
-	auto inputBytecode = program["--run-bytecode"] == true;
-	auto inputs = program.get<std::vector<std::string>>("inputs");
 	for (const auto& input : inputs) {
-		auto program = inputBytecode
-			? ProgramFromSource(input, lexer, parser, codeGen)
-			: ProgramFromInput(input);
-		 LuNI::Interpreter interpreter(program);
-		 interpreter.Run();
+		auto res = inputBytecode
+			? ProgramFromSource(&args, input)
+			: ProgramFromInput(&args, input);
+		if (!res.IsOk()) continue;
+		auto program = res.Ok();
+
+		LuNI::RunProgram(&args, program);
 	}
 
 	return 0;

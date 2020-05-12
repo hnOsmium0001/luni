@@ -1,15 +1,13 @@
 #pragma once
 
 #include <argparse/argparse.hpp>
+#include "Program.hpp"
 
 namespace LuNI {
 
-class Interpreter {
-private:
-	argparse::ArgumentParser* program;
-
-public:
-	Interpreter(argparse::ArgumentParser* program) noexcept;
-};
+auto RunProgram(
+	argparse::ArgumentParser* args,
+	BytecodeProgram opcodes
+) -> void;
 
 } // namespace LuNI
