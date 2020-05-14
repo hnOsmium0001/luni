@@ -3,7 +3,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-option (FORCE_COLORED_OUTPUT "Always produce ANSI-colored output (GNU/Clang only)." FALSE)
+option (FORCE_COLORED_OUTPUT "Always produce ANSI-colored output (GNU/Clang only)." TRUE)
 if (${FORCE_COLORED_OUTPUT})
     if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
        add_compile_options (-fdiagnostics-color=always)
@@ -23,10 +23,9 @@ add_executable(luni
 	main/Util.cpp
 	main/Program.hpp
 	main/Program.cpp
-	main/Lexer.hpp
-	main/Lexer.cpp
 	main/Parser.hpp
-	main/Parser.cpp
+	main/ParserLex.cpp
+	main/ParserAST.cpp
 	main/Interpreter.hpp
 	main/Interpreter.cpp
 	main/Main.cpp
