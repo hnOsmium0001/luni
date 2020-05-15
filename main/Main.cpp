@@ -1,14 +1,18 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <tl/expected.hpp>
 #include <argparse/argparse.hpp>
 #include "Util.hpp"
 #include "Program.hpp"
 #include "Parser.hpp"
 #include "Interpreter.hpp"
 
-using LuNI::Result;
-using LuNI::Err;
+using LuNI::Fmap;
+using LuNI::operator|;
+using LuNI::Bind;
+using LuNI::operator>>;
+
 using namespace LuNI::ErrorCodes;
 
 auto SetupArgParse() -> argparse::ArgumentParser {
@@ -34,10 +38,14 @@ auto SetupArgParse() -> argparse::ArgumentParser {
 	return program;
 }
 
+auto Err(u32 errorCode, std::string msg) -> tl::expected<LuNI::BytecodeProgram, LuNI::StandardError> {
+	return tl::unexpected(LuNI::StandardError{std::move(errorCode), std::move(msg)});
+}
+
 auto ProgramFromSource(
 	argparse::ArgumentParser* args,
 	const std::string& path
-) -> Result<LuNI::BytecodeProgram, LuNI::StandardError> {
+) -> tl::expected<LuNI::BytecodeProgram, LuNI::StandardError> {
 	auto ifs = std::ifstream{path};
 	if (!ifs) {
 		return Err(INPUT_FILE_NOT_FOUND, fmt::format("Unable to find source file {}", path));
@@ -50,7 +58,7 @@ auto ProgramFromSource(
 
 #ifdef LUNI_DEBUG_INFO
 	for (const auto& token : tokens) {
-		fmt::print("[Debug][Lexer] '{}' at {} with type {}\n", token.type, token.text, token.pos);
+		fmt::print("[Debug][Lexer] '{}' at {} with type {}\n", token.text, token.pos, token.type);
 	}
 #endif // #ifdef LUNI_DEBUG_INFO
 
@@ -61,7 +69,7 @@ auto ProgramFromSource(
 auto ProgramFromInput(
 	argparse::ArgumentParser* args,
 	const std::string& path
-) -> Result<LuNI::BytecodeProgram, LuNI::StandardError> {
+) -> tl::expected<LuNI::BytecodeProgram, LuNI::StandardError> {
 	auto ifs = std::ifstream{path};
 	if (!ifs) {
 		return Err(INPUT_FILE_NOT_FOUND, fmt::format("Unable to find bytecode file {}", path));
@@ -88,8 +96,8 @@ int main(int argc, char* argv[]) {
 		auto res = inputBytecode
 			? ProgramFromInput(&args, input)
 			: ProgramFromSource(&args, input);
-		if (!res.IsOk()) continue;
-		auto program = res.Ok();
+		if (!res) continue;
+		auto program = res.value();
 
 		LuNI::RunProgram(&args, program);
 	}

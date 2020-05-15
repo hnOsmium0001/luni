@@ -36,6 +36,8 @@ statement ::= variable-declartion
 	| until-statement
 	| for-statement
 
+if-statement ::= 'if' expression 'then' statement-body 'end'
+	| 'if' expression 'then' statement-body 'else' statement-body 'end'
 while-statement ::= 'while' expression 'do' statement-block 'end'
 until-statement ::= 'repeat' statement-block 'until' expression
 for-statement ::= 'for' identifier '=' expression expression expression 'do' statement-block 'end'

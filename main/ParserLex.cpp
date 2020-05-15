@@ -65,6 +65,7 @@ auto LuNI::FormatTokenType(TokenType type) -> std::string_view {
 		case TokenType::STRING_LITERAL: return "string literal";
 		case TokenType::MULTILINE_STRING_LITERAL: return "multiline string literal";
 	}
+	return "unknown token type";
 }
 
 static auto fisrtKeywordID = static_cast<u32>(TokenType::KEYWORD_AND);
@@ -87,14 +88,14 @@ class LexingState {
 public:
 	std::vector<Token> tokens;
 private:
-	std::string src;
-	std::string::iterator ptr;
+	std::reference_wrapper<const std::string> src;
+	std::string::const_iterator ptr;
 	u32 currentLine = 1;
 	u32 currentColumn = 1;
 
 public:
-	LexingState(std::string src) noexcept
-		: src{ std::move(src) }, ptr{ this->src.begin() } {
+	LexingState(const std::string& src) noexcept
+		: src{ std::cref(src) }, ptr{ src.cbegin() } {
 	}
 
 	LexingState(const LexingState&) = delete;
@@ -103,28 +104,34 @@ public:
 	LexingState& operator=(LexingState&&) = default;
 
 	auto HasNext() const -> bool {
-		return ptr != src.end();
+		auto& src = this->src.get();
+		return ptr != src.cend();
 	}
 
-	auto Peek(usize offset = 0) -> std::optional<char> {
-		auto ptr = this->ptr + offset;
+	auto Peek(usize offset = 0) const -> std::optional<char> {
 		if (!HasNext()) return {};
+		auto ptr = this->ptr + offset;
 		return *ptr;
 	}
 
-	auto PeekSome(usize chars, usize offset = 0) -> std::optional<std::string_view> {
-		auto ptr = this->ptr + offset;
+	auto PeekSome(usize chars, usize offset = 0) const -> std::optional<std::string_view> {
 		if (!HasNext()) return {};
-		// Force convert to usize (from std::string::iterator::difference_type)
-		usize dist = std::distance(ptr, src.end());
+		auto& src = this->src.get();
+		auto ptr = this->ptr + offset;
+
+		// 从std::string::const_iterator::difference_type强制装换成usize
+		// 不知为何std::distance模板参数推导失败，得显示声明模板参数才行
+		usize dist = std::distance<std::string::const_iterator>(ptr, src.cend());
 		auto charsClamped = std::min(dist, chars);
 		return std::string_view(&*ptr, charsClamped);
 	}
 
-	auto PeekFull(usize chars, usize offset = 0) -> std::optional<std::string_view> {
-		auto ptr = this->ptr + offset;
+	auto PeekFull(usize chars, usize offset = 0) const -> std::optional<std::string_view> {
 		if (!HasNext()) return {};
-		usize dist = std::distance(ptr, src.end());
+		auto& src = this->src.get();
+		auto ptr = this->ptr + offset;
+
+		usize dist = std::distance<std::string::const_iterator>(ptr, src.cend());
 		if (dist < chars) {
 			return {};
 		} else {
@@ -148,10 +155,11 @@ public:
 
 	auto TakeSome(usize chars) -> std::optional<std::string_view> {
 		if (!HasNext()) return {};
-		usize dist = std::distance(ptr, src.end());
+		auto& src = this->src.get();
+		usize dist = std::distance(ptr, src.cend());
 		auto charsClamped = std::min(dist, chars);
 
-		// Convert `ptr` (std::string::iterator) to a pointer
+		// 将std::string::iterator转换为指针
 		auto result = std::string_view(&*ptr, charsClamped);
 
 		// TODO optimize?
@@ -185,7 +193,8 @@ public:
 	}
 
 	auto Advance(usize chars) -> usize {
-		usize dist = std::distance(ptr, src.end());
+		auto& src = this->src.get();
+		usize dist = std::distance(ptr, src.cend());
 		auto charsClamped = std::min(dist, chars);
 
 		// TODO optimize?
@@ -204,7 +213,8 @@ public:
 	}
 
 	auto Previous() -> bool {
-		if (ptr == src.begin()) {
+		auto& src = this->src.get();
+		if (ptr == src.cbegin()) {
 			return false;
 		} else {
 			--ptr;
@@ -220,7 +230,8 @@ public:
 	}
 
 	auto Previous(usize chars) -> usize {
-		usize dist = std::distance(src.begin(), ptr);
+		auto& src = this->src.get();
+		usize dist = std::distance(src.cbegin(), ptr);
 		auto charsClamped = std::min(dist, chars);
 
 		// TODO optimize?
@@ -325,7 +336,7 @@ static auto TryLexIdentifierOrKeyword(LexingState& state) -> std::optional<Token
 		return {};
 	}
 
-	// 接下啦必然是一个identifier
+	// 接下来必然是identifier
 	auto pos = CurrentPosOf(state);
 
 	std::string buf;
@@ -357,7 +368,7 @@ static auto TryLexIdentifierOrKeyword(LexingState& state) -> std::optional<Token
 		? TokenType::IDENTIFIER
 		: it->second;
 
-	return Token{std::move(buf), pos, type};
+	return Token{std::move(buf), std::move(pos), type};
 }
 
 static auto TryLexOperator(LexingState& state) -> std::optional<Token> {
@@ -381,7 +392,7 @@ static auto TryLexOperator(LexingState& state) -> std::optional<Token> {
 
 			auto pos = CurrentPosOf(state);
 			state.Advance(n);
-			return Token{std::string{view}, pos, it->second};
+			return Token{std::string{view}, std::move(pos), it->second};
 		}
 
 #ifdef LUNI_DEBUG_INFO
@@ -423,25 +434,6 @@ static auto TryLexSimpleString(LexingState& state) -> std::string {
 }
 
 static auto TryLexMultilineString(LexingState& state) -> std::string {
-	//// Number of equal signs between the brackets
-	//u32 equals = 0;
-	//while (true) {
-	//  auto opt = state.Take();
-	//  if (!opt) return {};
-	//  auto c = *opt;
-	//  switch (c) {
-	//    case '=':
-	//      ++equals;
-	//      break;
-	//    case ']': 
-	//      goto contentReading;
-	//    default:
-	//      // Not a sring literal, probably an operator instead
-	//      return {};
-	//  }
-	//}
-	
-	contentReading:
 	std::string buf;
 	// TODO
 	return buf;
@@ -455,7 +447,7 @@ static auto TryLexString(LexingState& state) -> std::optional<Token> {
 
 		state.Advance();
 		auto pos = CurrentPosOf(state);
-		return Token{TryLexSimpleString(state), pos, TokenType::STRING_LITERAL};
+		return Token{TryLexSimpleString(state), std::move(pos), TokenType::STRING_LITERAL};
 	}
 
 	if (state.PeekSome(2).value_or("") == "[[") {
@@ -465,7 +457,7 @@ static auto TryLexString(LexingState& state) -> std::optional<Token> {
 
 		state.Advance(2);
 		auto pos = CurrentPosOf(state);
-		return Token{TryLexMultilineString(state), pos, TokenType::MULTILINE_STRING_LITERAL};
+		return Token{TryLexMultilineString(state), std::move(pos), TokenType::MULTILINE_STRING_LITERAL};
 	}
 
 #ifdef LUNI_DEBUG_INFO
@@ -475,7 +467,7 @@ static auto TryLexString(LexingState& state) -> std::optional<Token> {
 }
 
 static auto TryLexLineComment(LexingState& state) -> void {
-	// Keep consuming input until we see a line break
+	// 销毁所有字符直到一个换行符
 	while (true) {
 		auto opt = state.Take();
 		if (!opt) return;
@@ -485,7 +477,7 @@ static auto TryLexLineComment(LexingState& state) -> void {
 }
 
 static auto TryLexMultilineComment(LexingState& state) -> void {
-	// Keep consuming input until we see a multiline comment end
+	// 销毁所有字符直到“--]]”
 	u32 stage = 0;
 	while (true) {
 		auto opt = state.Take();

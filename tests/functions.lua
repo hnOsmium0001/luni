@@ -1,5 +1,5 @@
 function test_function()
-	print("Thsi is from test_function()")
+	print("This is from test_function()")
 end
 
 test_function()

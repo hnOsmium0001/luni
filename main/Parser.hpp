@@ -96,15 +96,31 @@ struct Token {
 };
 
 enum class ASTType {
+	FUNCTION_DECLARATION,
 
+	PARAMETER_LIST, // 只包含标识符
+	PARAMETER,
+
+	IF,
+	WHILE,
+	UNTIL,
+	FOR,
+	VARIABLE_DECLARATION,
+
+	IDENTIFIER,
+	
+
+	FUNCTION_CALL_PARAMS, // 任意表达式（标识符也算）
+	FUNCTION_CALL, // 既可以是表达式也可以是语句
 };
 
 class ASTNode {
 public:
+	ASTType type;
 	std::vector<std::unique_ptr<ASTNode>> children;
 
 public:
-	ASTNode() noexcept = default;
+	ASTNode(ASTType type) noexcept;
 	~ASTNode() noexcept = default;
 
 	ASTNode(ASTNode&& that) noexcept = default;
@@ -122,7 +138,8 @@ private:
 	std::vector<StandardError> errors;
 
 public:
-	ParsingResult() noexcept = default;
+	ParsingResult(std::unique_ptr<ASTNode> root, std::vector<StandardError> errors) noexcept
+		: root{ std::move(root) }, errors{ std::move(errors) } {}
 	~ParsingResult() noexcept = default;
 
 	ParsingResult(const ParsingResult& that) noexcept = delete;

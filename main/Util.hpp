@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <vector>
 #include <utility>
 #include <optional>
 #include <variant>
@@ -21,6 +22,8 @@ using i64 = int64_t;
 using f32 = float;
 using f64 = double;
 using usize = size_t;
+
+namespace LuNI {
 
 template <typename T, typename Func>
 auto operator|(const std::optional<T>& opt, Func&& func) -> std::optional<decltype(func(*opt))> {
@@ -40,39 +43,64 @@ auto Bind(Func&& func, const std::optional<Ts>&... opts) -> decltype(func((*opts
 	return (... && opts) ? func((*opts)...) : std::nullopt;
 }
 
-
-namespace LuNI {
-
-template<class... Ts> struct Overloaded : Ts... { using Ts::operator()...; };
-template<class... Ts> Overloaded(Ts...) -> Overloaded<Ts...>;
-
-template <typename T, typename E>
-class Result {
+template <typename F>
+class ScopeGuard {
 private:
-	std::variant<T, E> data;
+	F function;
+	bool cancelled = true;
 
 public:
-	static_assert(!std::is_same<T, E>::value);
+	ScopeGuard() = delete;
+	explicit ScopeGuard(F&& function) noexcept
+		: function{ std::move(function) } {
+	}
+	ScopeGuard(const ScopeGuard&) = delete;
+	ScopeGuard& operator=(const ScopeGuard&) = delete;
+	ScopeGuard(ScopeGuard&&) = delete;
+	ScopeGuard& operator=(ScopeGuard&&) = delete;
+	~ScopeGuard() noexcept {
+		if (!cancelled) {
+			function();
+		}
+	}
 
-	Result(T t) noexcept : data{ std::move(t) } {}
-	Result(E e) noexcept : data{ std::move(e) } {}
-	
-	Result(Result&& that) noexcept = default;
-	Result& operator=(Result&& that) noexcept = default;
-	~Result() noexcept = default;
+	auto Cancel() -> void { this->cancelled = true; }
+};
 
-	auto IsOk() const -> bool { return data.index() == 0; }
-	auto IsErr() const -> bool { return data.index() == 1; }
-	
-	auto Ok() -> T& { return std::get<T>(data); }
-	auto Ok() const -> const T& { return std::get<T>(data); }
-	auto Err() -> E& { return std::get<E>(data); }
-	auto Err() const -> const E& { return std::get<E>(data); }
-	auto Data() -> std::variant<T, E>& { return data; }
-	auto Data() const -> const std::variant<T, E>& { return data; }
+template <typename Iterator>
+class Slice {
+private:
+	Iterator beginIt;
+	Iterator endIt;
 
-	bool operator==(const Result<T, E>& that) const { return this->data == that.data; }
-	operator bool() const { return this->IsOk(); }
+public:
+	static auto None(Iterator end) -> Slice {
+		return Slice{end, end};
+	}
+	static auto Between(Iterator begin, Iterator end) -> Slice {
+		return Slice{begin, end};
+	}
+	static auto At(Iterator begin, usize size) -> Slice {
+		auto end = begin; // 复制
+		std::advance(end, size);
+		return Slice{begin, end};
+	}
+
+	Slice(Iterator begin, Iterator end)
+		: beginIt{ begin }, endIt{ end } {}
+
+	Slice(const Slice& that) = default;
+	Slice& operator=(const Slice& that) = default;
+	Slice(Slice&& that) = default;
+	Slice& operator=(Slice&& that) = default;
+
+	auto operator[](usize index) -> typename std::iterator_traits<Iterator>::reference {
+		return beginIt[index];
+	}
+	auto begin() const -> Iterator { return beginIt; }
+	auto end() const -> Iterator { return endIt; }
+
+	auto Size() -> usize { return std::distance(beginIt, endIt); }
 };
 
 /// General error wrapper around error ID and error message
@@ -81,12 +109,12 @@ struct StandardError {
 	std::string msg;
 };
 
-inline auto Err(u32 id, std::string msg) -> StandardError {
-	return StandardError{std::move(id), std::move(msg)};
-}
-
 namespace ErrorCodes {
 	constexpr u32 INPUT_FILE_NOT_FOUND = 0;
+
+	constexpr u32 PARSER_EXPECTED_IDENTIFIER = 100;
+	constexpr u32 PARSER_EXPECTED_OPERATOR = 101;
+	// TODO
 } // namespace ErrorCodes
 
 } // namespace LuNI
