@@ -2,6 +2,7 @@
 
 #include <string>
 #include <optional>
+#include <variant>
 #include <vector>
 #include <memory>
 #include <fmt/format.h>
@@ -96,6 +97,12 @@ struct Token {
 };
 
 enum class ASTType {
+	INTEGER_LITERAL,
+	FLOATING_POINT_LITERAL,
+	STRING_LITERAL,
+	ARRAY_LITERAL,
+	METATABLE_LITERAL,
+
 	FUNCTION_DECLARATION,
 
 	PARAMETER_LIST, // 只包含标识符
@@ -105,10 +112,12 @@ enum class ASTType {
 	WHILE,
 	UNTIL,
 	FOR,
+	LOCAL_VARIABLE_DECLARATION,
 	VARIABLE_DECLARATION,
+	// 上方节点的任意组合，包括FUNCTION_CALL
+	STATEMENT_BLOCK,
 
 	IDENTIFIER,
-	
 
 	FUNCTION_CALL_PARAMS, // 任意表达式（标识符也算）
 	FUNCTION_CALL, // 既可以是表达式也可以是语句
@@ -116,10 +125,23 @@ enum class ASTType {
 
 class ASTNode {
 public:
+	using ExtraData = std::variant<
+		std::monostate,
+		u32, f32,
+		std::string
+	>;
+
 	ASTType type;
 	std::vector<std::unique_ptr<ASTNode>> children;
+	std::unique_ptr<ExtraData> extraData;
 
 public:
+	static auto Identifier(std::string text) -> std::unique_ptr<ASTNode>;
+	static auto Integer(u32 literal) -> std::unique_ptr<ASTNode>;
+	static auto Float(f32 literal) -> std::unique_ptr<ASTNode>;
+	// TODO array
+	// TODO metatable
+
 	ASTNode(ASTType type) noexcept;
 	~ASTNode() noexcept = default;
 
@@ -129,6 +151,12 @@ public:
 	ASTNode& operator=(const ASTNode& that) noexcept = default;
 
 	auto AddChild(std::unique_ptr<ASTNode> child) -> void;
+
+	auto SetExtraData(ExtraData data) -> void;
+	/// 断言extraData非空
+	auto GetExtraData() const -> const ExtraData&;
+	/// 断言extraData非空
+	auto GetExtraData() -> ExtraData&;
 };
 
 class ParsingResult {

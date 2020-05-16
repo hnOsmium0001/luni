@@ -126,19 +126,6 @@ public:
 		return std::string_view(&*ptr, charsClamped);
 	}
 
-	auto PeekFull(usize chars, usize offset = 0) const -> std::optional<std::string_view> {
-		if (!HasNext()) return {};
-		auto& src = this->src.get();
-		auto ptr = this->ptr + offset;
-
-		usize dist = std::distance<std::string::const_iterator>(ptr, src.cend());
-		if (dist < chars) {
-			return {};
-		} else {
-			return std::string_view{&*ptr, chars};
-		}
-	}
-
 	auto Take() -> std::optional<char> {
 		if (!HasNext()) return {};
 		auto result = *ptr;
@@ -262,10 +249,11 @@ public:
 };
 }
 
-auto CurrentPosOf(const LexingState &state) -> TokenPos {
+static auto CurrentPosOf(const LexingState &state) -> TokenPos {
 	return TokenPos{state.line(), state.column()};
 }
 
+// TODO 把上面那个巨型switch换成bimap
 static const std::unordered_map<std::string_view, TokenType> keywords{
 	{ "and", TokenType::KEYWORD_AND },
 	{ "break", TokenType::KEYWORD_BREAK },
@@ -506,7 +494,7 @@ static auto TryLexMultilineComment(LexingState& state) -> void {
 }
 
 static auto TryLexComments(LexingState& state) -> std::optional<TokenPos> {
-	auto first2Opt = state.PeekFull(2);
+	auto first2Opt = state.PeekSome(2);
 	if (!first2Opt) return {};
 	auto first2 = *first2Opt;
 
@@ -522,7 +510,7 @@ static auto TryLexComments(LexingState& state) -> std::optional<TokenPos> {
 	auto pos = CurrentPosOf(state);
 	state.Advance(2);
 
-	auto next2 = state.PeekFull(2, 2);
+	auto next2 = state.PeekSome(2, 2);
 	if (next2 && *next2 == "[[") {
 #ifdef LUNI_DEBUG_INFO
 	fmt::print("[Debug][Lexer.Comment] Found multiline comment beginning\n");
@@ -590,10 +578,12 @@ auto LuNI::DoLexing(
 		if (std::isspace(nextChar)) {
 			auto hasWhitepsace = state.GetLastToken().type == TokenType::WHITESPACE;
 			// 因为AST生成器会检查换行符（“\n”），所以必须保留所有的换行符
-			// 其他的空白符都可以只保留一个
-			if (hasWhitepsace && nextChar != '\n') {
+			// 为了简化AST生成器的逻辑（不需要处处检查并吞掉空白符），其他的空白符就不保留了
+			// 只要能够正常分离不同的token就行了
+			if (nextChar != '\n') {
 				if (verbose) fmt::print("Discarded whitespace at {}\n", CurrentPosOf(state));
-			} else {
+			} else if (!hasWhitepsace) {
+				// 同样是为了简化AST生成器的工作，只保留一个换行符
 				auto currentPos = CurrentPosOf(state);
 				if (verbose) fmt::print("Generated whitespace token at {}\n", currentPos);
 				state.AddToken(Token{std::string{nextChar}, currentPos, TokenType::WHITESPACE});
