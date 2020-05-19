@@ -23,8 +23,9 @@ enum class TokenType {
 	KEYWORD,
 	OPERATOR,
 	
+	INTEGER_LITERAL,
+	FLOATING_POINT_LITERAL,
 	STRING_LITERAL,
-	MULTILINE_STRING_LITERAL,
 
 	// ========= 特殊类型token ========
 	// 包含关键字、运算符，符号等
@@ -103,7 +104,7 @@ enum class ASTType {
 	ARRAY_LITERAL,
 	METATABLE_LITERAL,
 
-	FUNCTION_DECLARATION,
+	FUNCTION_DEFINITION,
 
 	PARAMETER_LIST, // 只包含标识符
 	PARAMETER,
@@ -127,8 +128,11 @@ class ASTNode {
 public:
 	using ExtraData = std::variant<
 		std::monostate,
-		u32, f32,
+		u32,
+		f32,
 		std::string
+		// TODO lua array
+		// TODO lua metatable
 	>;
 
 	ASTType type;
@@ -139,6 +143,7 @@ public:
 	static auto Identifier(std::string text) -> std::unique_ptr<ASTNode>;
 	static auto Integer(u32 literal) -> std::unique_ptr<ASTNode>;
 	static auto Float(f32 literal) -> std::unique_ptr<ASTNode>;
+	static auto String(std::string literal) -> std::unique_ptr<ASTNode>;
 	// TODO array
 	// TODO metatable
 
@@ -203,7 +208,8 @@ struct fmt::formatter<LuNI::TokenType> {
 			case TokenType::KEYWORD: return format_to(ctx.out(), "keyword");
 			case TokenType::OPERATOR: return format_to(ctx.out(), "operator");
 			case TokenType::STRING_LITERAL: return format_to(ctx.out(), "string literal");
-			case TokenType::MULTILINE_STRING_LITERAL: return format_to(ctx.out(), "multiline string literal");
+			case TokenType::INTEGER_LITERAL: return format_to(ctx.out(), "integer literal");
+			case TokenType::FLOATING_POINT_LITERAL: return format_to(ctx.out(), "floating point literal");
 		}
 		throw std::runtime_error("Invalid token type");
 	}

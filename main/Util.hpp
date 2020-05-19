@@ -103,6 +103,11 @@ public:
 	auto Size() -> usize { return std::distance(beginIt, endIt); }
 };
 
+template <typename Container>
+using RegularSlice = Slice<typename Container::iterator>;
+template <typename Container>
+using ConstSlice = Slice<typename Container::const_iterator>;
+
 /// General error wrapper around error ID and error message
 struct StandardError {
 	u32 id;

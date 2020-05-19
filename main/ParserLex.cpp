@@ -63,7 +63,8 @@ auto LuNI::FormatTokenType(TokenType type) -> std::string_view {
 		case TokenType::KEYWORD: return "keyword";
 		case TokenType::OPERATOR: return "operator";
 		case TokenType::STRING_LITERAL: return "string literal";
-		case TokenType::MULTILINE_STRING_LITERAL: return "multiline string literal";
+		case TokenType::INTEGER_LITERAL: return "integer literal";
+		case TokenType::FLOATING_POINT_LITERAL: return "floating point literal";
 	}
 	return "unknown token type";
 }
@@ -307,6 +308,8 @@ static const std::unordered_map<std::string_view, TokenType> operators{
 };
 static const std::regex identifierBegin("[a-zA-Z_]");
 static const std::regex identifierAfter("[0-9a-zA-Z_]");
+static const std::regex integerLiteral("[0-9]");
+static const std::regex floatPointLiteral("[0-9]*\\.[0-9]+");
 static const std::string_view lineComment = "--";
 static const std::string_view blockCommentBeg = "--[[";
 static const std::string_view blockCommentEnd = "--]]";
@@ -322,6 +325,8 @@ static auto TryLexIdentifierOrKeyword(LexingState& state) -> std::optional<Token
 		fmt::print("[Debug][Lexer.Iden] First char cannot be a part of an identifier, returning\n");
 #endif // #ifdef LUNI_DEBUG_INFO
 		return {};
+	} else {
+		state.Advance();
 	}
 
 	// 接下来必然是identifier
@@ -445,12 +450,65 @@ static auto TryLexString(LexingState& state) -> std::optional<Token> {
 
 		state.Advance(2);
 		auto pos = CurrentPosOf(state);
-		return Token{TryLexMultilineString(state), std::move(pos), TokenType::MULTILINE_STRING_LITERAL};
+		return Token{TryLexMultilineString(state), std::move(pos), TokenType::STRING_LITERAL};
 	}
 
 #ifdef LUNI_DEBUG_INFO
 	fmt::print("[Debug][Lexer.Str] No string literal beginning found\n");
 #endif // #ifdef LUNI_DEBUG_INFO
+	return {};
+}
+
+// TODO 添加二进制、十六进制字面量的支持
+static auto TryLexIntegerLiteral(LexingState& state) -> std::optional<Token> {
+	auto firstOpt = state.Peek();
+	if (!firstOpt) return {};
+	auto beginning = *firstOpt;
+
+#ifdef LUNI_DEBUG_INFO
+	fmt::print("[Debug][Lexer.Int] First char: '{}'\n", first);
+#endif // #ifdef LUNI_DEBUG_INFO
+
+	if (!std::regex_match(std::string{beginning}, integerLiteral)) {
+#ifdef LUNI_DEBUG_INFO
+		fmt::print("[Debug][Lexer.Int] First char cannot be a part of an integer literal, returning\n");
+#endif // #ifdef LUNI_DEBUG_INFO
+		return {};
+	} else {
+		state.Advance();
+	}
+
+	auto pos = CurrentPosOf(state);
+
+	std::string buf;
+	while (true) {
+		auto opt = state.Take();
+		if (!opt) break;
+
+#ifdef LUNI_DEBUG_INFO
+		fmt::print("[Debug][Lexer.Int] Fetched char: '{}'\n", *opt);
+#endif // #ifdef LUNI_DEBUG_INFO
+
+		if (!std::regex_match(std::string{*opt}, integerLiteral)) {
+#ifdef LUNI_DEBUG_INFO
+		fmt::print("[Debug][Lexer.Int] Fetched char cannot be a part of an integer literal, result: '{}'\n", buf);
+#endif // #ifdef LUNI_DEBUG_INFO
+
+			state.Previous();
+			break;
+		}
+
+		buf += *opt;
+#ifdef LUNI_DEBUG_INFO
+		fmt::print("[Debug][Lexer.Int] Current buffer: '{}'\n", buf);
+#endif // #ifdef LUNI_DEBUG_INFO
+	}
+
+	return Token{std::move(buf), std::move(pos), TokenType::INTEGER_LITERAL};
+}
+
+static auto TryLexFloatingPointLiteral(LexingState& state) -> std::optional<Token> {
+	auto front = TryLexIntegerLiteral(state);
 	return {};
 }
 

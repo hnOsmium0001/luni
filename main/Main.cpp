@@ -62,11 +62,15 @@ auto ProgramFromSource(
 	}
 #endif // #ifdef LUNI_DEBUG_INFO
 
-	// TODO
+	auto ast = LuNI::DoParsing(args, tokens);
+	auto& astRoot = *ast.root.get();
+
+	LuNI::RunProgram_WalkAST(args, &astRoot);
+
 	return LuNI::BytecodeProgram{};
 }
 
-auto ProgramFromInput(
+auto ProgramFromBytecode(
 	argparse::ArgumentParser* args,
 	const std::string& path
 ) -> tl::expected<LuNI::BytecodeProgram, LuNI::StandardError> {
@@ -94,7 +98,7 @@ int main(int argc, char* argv[]) {
 
 	for (const auto& input : inputs) {
 		auto res = inputBytecode
-			? ProgramFromInput(&args, input)
+			? ProgramFromBytecode(&args, input)
 			: ProgramFromSource(&args, input);
 		if (!res) continue;
 		auto program = res.value();

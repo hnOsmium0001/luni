@@ -18,7 +18,16 @@ number-literal ::= integer-literal | floating-point-literal
 
 string-literal ::= '"' character* '"'
 
-expression ::= 
+metatable-literal ::= ; TODO
+
+expression ::= function-call
+	| add-expr | substract-expr | multiply-expr | divide-expr | mod-expr | exp-expr
+	| equals-expr | not-equals-expr
+	| less-expr | greater-expr | less-eq-expr | greater-eq-expr
+	| length-expr
+	| integer-literal | floating-point-literal | string-literal | array-literal | metatable-literal
+
+; TODO define specific expressions
 
 definition-block ::= definition*
 definition ::= function-definition

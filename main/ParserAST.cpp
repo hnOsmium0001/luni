@@ -1,16 +1,31 @@
 #include <stdexcept>
 #include <utility>
 #include <functional>
-#include <initializer_list>
-#include <unordered_map>
 #include "Parser.hpp"
 
 using namespace LuNI;
 
-auto ASTNode::Identifier(std::string text) -> std::unique_ptr<ASTNode> {
-	auto res = std::make_unique<ASTNode>(ASTType::IDENTIFIER);
-	res->SetExtraData(std::move(text));
+template <typename T, ASTType type>
+inline static auto MakeASTNode(T&& t) -> std::unique_ptr<ASTNode> {
+	auto res = std::make_unique<ASTNode>(type);
+	res->SetExtraData(std::forward<T>(t));
 	return res;
+}
+
+auto ASTNode::Identifier(std::string text) -> std::unique_ptr<ASTNode> {
+	return MakeASTNode<std::string, ASTType::IDENTIFIER>(std::move(text));
+}
+
+auto ASTNode::Integer(u32 literal) -> std::unique_ptr<ASTNode> {
+	return MakeASTNode<u32, ASTType::IDENTIFIER>(std::move(literal));
+}
+
+auto ASTNode::Float(f32 literal) -> std::unique_ptr<ASTNode> {
+	return MakeASTNode<f32, ASTType::IDENTIFIER>(std::move(literal));
+}
+
+auto ASTNode::String(std::string literal) -> std::unique_ptr<ASTNode> {
+	return MakeASTNode<std::string, ASTType::STRING_LITERAL>(std::move(literal));
 }
 
 ASTNode::ASTNode(ASTType type) noexcept
@@ -54,7 +69,7 @@ private:
 	std::vector<Token>::const_iterator ptr;
 
 public:
-	using Slice = LuNI::Slice<std::vector<Token>::const_iterator>;
+	using Slice = LuNI::ConstSlice<std::vector<Token>>;
 
 	ParsingState(const std::vector<Token>& tokensIn) noexcept
 		: tokens{ std::cref(tokensIn) }, ptr{ tokensIn.begin() } {}
@@ -129,11 +144,42 @@ public:
 
 // TODO 实现完整的parser backtracking使parser能够在有语法错误的情况下继续工作
 
-static auto TryMatchExpression(ParsingState& state) -> std::unique_ptr<ASTNode> {
+static auto TryMatchArrayLiteral(ParsingState& state) -> std::unique_ptr<ASTNode> {
 	return nullptr; // TODO
 }
 
-// 垃圾c++不能自动循环引用函数
+static auto TryMatchMetatableLiteral(ParsingState& state) -> std::unique_ptr<ASTNode> {
+	return nullptr; // TODO
+}
+
+static auto TryMatchFunctionCall(ParsingState& state) -> std::unique_ptr<ASTNode>;
+static auto TryMatchExpression(ParsingState& state) -> std::unique_ptr<ASTNode> {
+	auto snapshot = state.RecordSnapshot();
+	auto snapshotGuard = ScopeGuard([&]() { state.RestoreSnapshot(snapshot); });
+	
+	auto first = state.Take();
+	if (!first) return nullptr;
+	switch (first->type) {
+		case TokenType::STRING_LITERAL:
+		case TokenType::INTEGER_LITERAL:
+		case TokenType::FLOATING_POINT_LITERAL: {
+			snapshotGuard.Cancel();
+			return ASTNode::String(first->text);
+		}
+		default: break;
+	}
+
+	auto funcCall = TryMatchFunctionCall(state);
+	if (funcCall) {
+		snapshotGuard.Cancel();
+		return funcCall;
+	}
+
+	// TODO
+
+	return nullptr;
+}
+
 static auto TryMatchStatement(ParsingState& state) -> std::unique_ptr<ASTNode>;
 /// 尝试匹配任意数量的语句组合（包括零个）
 /// 注意：这意味着该函数必然返回一个非空的AST节点
@@ -164,7 +210,8 @@ static auto MatchStatementBlock(ParsingState& state) -> std::unique_ptr<ASTNode>
 		// 以及
 		// ```lua
 		// local a = 0
-		// print("hello, world")print(a)
+		// print("hello, world")
+		// print(a)
 		// ```
 		// 是等价的
 
@@ -342,7 +389,7 @@ static auto MatchFunctionParams(ParsingState& state) -> std::unique_ptr<ASTNode>
 
 		params->AddChild(std::move(param));
 
-		// 本lua实现允许trailing commas（其实主要是不允许的话实现起来比较麻烦233）
+		// Lua允许trailing commas
 		// 如果没有逗号了，那么当前参数列表肯定已经结束了（或者是语法错误）
 		// 如果还有逗号并且下次迭代时没有可用的表达式（参数）了，那么当前参数列表也会正常结束
 		if (!state.TakeIf(TokenType::SYMBOL_COMMA)) break;
@@ -365,6 +412,8 @@ static auto TryMatchFunctionCall(ParsingState& state) -> std::unique_ptr<ASTNode
 	auto funcCall = std::make_unique<ASTNode>(ASTType::FUNCTION_CALL);
 	funcCall->AddChild(ASTNode::Identifier(funcName->text));
 	funcCall->AddChild(std::move(paramList));
+
+	snapshotGuard.Cancel();
 	return funcCall;
 }
 
@@ -392,12 +441,42 @@ static auto TryMatchStatement(ParsingState& state) -> std::unique_ptr<ASTNode> {
 
 
 static auto MatchFunctionDefParams(ParsingState& state) -> std::unique_ptr<ASTNode> {
-	// TODO
-	return nullptr;
+	auto params = std::make_unique<ASTNode>(ASTType::FUNCTION_CALL_PARAMS);
+	while (true) {
+		auto param = state.TakeIdentifier();
+		if (!param) break;
+
+		params->AddChild(ASTNode::Identifier(param->text));
+
+		// Lua允许trailing commas
+		if (!state.TakeIf(TokenType::SYMBOL_COMMA)) break;
+	}
+	return params;
 }
 
 static auto TryMatchFunctionDefinition(ParsingState& state) -> std::unique_ptr<ASTNode> {
-	// TODO
+	auto snapshot = state.RecordSnapshot();
+	auto snapshotGuard = ScopeGuard([&]() { state.RestoreSnapshot(snapshot); });
+
+	if (!state.TakeIf(TokenType::KEYWORD_FUNCTION)) return nullptr;
+
+	auto name = state.TakeIdentifier();
+	if (!name) return nullptr;
+
+	if (!state.TakeIf(LuNI::TokenType::SYMBOL_LEFT_PAREN)) return nullptr;
+	auto params = MatchFunctionDefParams(state);
+	if (!state.TakeIf(LuNI::TokenType::SYMBOL_RIGHT_PAREN)) return nullptr;
+
+	auto body = MatchStatementBlock(state);
+
+	if (!state.TakeIf(TokenType::KEYWORD_END)) return nullptr;
+
+	auto funcDef = std::make_unique<ASTNode>(ASTType::FUNCTION_DEFINITION);
+	funcDef->AddChild(ASTNode::Identifier(name->text));
+	funcDef->AddChild(std::move(params));
+	funcDef->AddChild(std::move(body));
+
+	snapshotGuard.Cancel();
 	return nullptr;
 }
 
@@ -414,9 +493,23 @@ auto LuNI::DoParsing(
 ) -> ParsingResult {
 	auto verbose = (*args)["--verbose-parsing"] == true;
 
+	fmt::print("here");
 	ParsingState state{tokens};
 	while (state.ShouldContinue()) {
-		// TODO
+		if (auto node = TryMatchDefinition(state)) {
+			if (verbose) {
+				fmt::print("Collected top-level definition\n");
+			}
+			state.root->AddChild(std::move(node));
+			continue;
+		}
+		if (auto node = TryMatchStatement(state)) {
+			if (verbose) {
+				fmt::print("Collected top-level statement\n");
+			}
+			state.root->AddChild(std::move(node));
+			continue;
+		}
 	}
 
 	return state.FinishParsing();
