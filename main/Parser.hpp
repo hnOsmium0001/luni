@@ -17,8 +17,6 @@ namespace LuNI {
 enum class TokenType {
 	// ======== 基础类型token ========
 
-	WHITESPACE,
-
 	IDENTIFIER,
 	KEYWORD,
 	OPERATOR,
@@ -83,8 +81,8 @@ enum class TokenType {
 	SYMBOL_3_DOT, // "..."
 };
 
-auto FormatTokenType(TokenType type) -> std::string_view;
 auto NormalizeTokenType(TokenType type) -> TokenType;
+auto Format(TokenType type) -> std::string_view;
 
 struct TokenPos {
 	u32 line;
@@ -98,6 +96,8 @@ struct Token {
 };
 
 enum class ASTType {
+	SCRIPT,
+
 	INTEGER_LITERAL,
 	FLOATING_POINT_LITERAL,
 	STRING_LITERAL,
@@ -106,8 +106,8 @@ enum class ASTType {
 
 	FUNCTION_DEFINITION,
 
-	PARAMETER_LIST, // 只包含标识符
-	PARAMETER,
+	FUNC_DEF_PARAMETER_LIST, // 只包含标识符
+	FUNC_DEF_PARAMETER,
 
 	IF,
 	WHILE,
@@ -123,6 +123,8 @@ enum class ASTType {
 	FUNCTION_CALL_PARAMS, // 任意表达式（标识符也算）
 	FUNCTION_CALL, // 既可以是表达式也可以是语句
 };
+
+auto Format(ASTType type) -> std::string_view;
 
 class ASTNode {
 public:
@@ -201,26 +203,29 @@ struct fmt::formatter<LuNI::TokenType> {
 
 	template <typename FormatContext>
 	auto format(const LuNI::TokenType& type, FormatContext& ctx) {
-		using LuNI::TokenType;
-		switch (LuNI::NormalizeTokenType(type)) {
-			case TokenType::WHITESPACE: return format_to(ctx.out(), "whitespace");
-			case TokenType::IDENTIFIER: return format_to(ctx.out(), "identifier");
-			case TokenType::KEYWORD: return format_to(ctx.out(), "keyword");
-			case TokenType::OPERATOR: return format_to(ctx.out(), "operator");
-			case TokenType::STRING_LITERAL: return format_to(ctx.out(), "string literal");
-			case TokenType::INTEGER_LITERAL: return format_to(ctx.out(), "integer literal");
-			case TokenType::FLOATING_POINT_LITERAL: return format_to(ctx.out(), "floating point literal");
-		}
-		throw std::runtime_error("Invalid token type");
+		return format_to(ctx.out(), LuNI::Format(type));
 	}
 };
 
 template <>
 struct fmt::formatter<LuNI::TokenPos> {
-	constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+	template <typename ParseContext>
+	constexpr auto parse(ParseContext& ctx) { return ctx.begin(); }
 
 	template <typename FormatContext>
 	auto format(const LuNI::TokenPos& pos, FormatContext& ctx) {
 		return format_to(ctx.out(), "{}:{}", pos.line, pos.column);
 	}
 };
+
+template <>
+struct fmt::formatter<LuNI::ASTType> {
+	template <typename ParseContext>
+	constexpr auto parse(ParseContext& ctx) { return ctx.begin(); }
+
+	template <typename FormatContext>
+	auto format(const LuNI::ASTType& type, FormatContext& ctx) {
+		return format_to(ctx.out(), LuNI::Format(type));
+	}
+};
+

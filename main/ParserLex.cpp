@@ -8,7 +8,22 @@
 
 using namespace LuNI;
 
-auto LuNI::FormatTokenType(TokenType type) -> std::string_view {
+static auto fisrtKeywordID = static_cast<u32>(TokenType::KEYWORD_AND);
+static auto lastKeywordID = static_cast<u32>(TokenType::KEYWORD_WHILE);
+static auto firstOperID = static_cast<u32>(TokenType::OPERATOR_PLUS);
+static auto lastOperID = static_cast<u32>(TokenType::SYMBOL_3_DOT);
+auto LuNI::NormalizeTokenType(TokenType type) -> TokenType {
+	auto id = static_cast<u32>(type);
+	if (id >= fisrtKeywordID && id <= lastKeywordID) {
+		return TokenType::KEYWORD;
+	} else if (id >= firstOperID && id <= lastOperID) {
+		return TokenType::OPERATOR;
+	} else {
+		return type;
+	}
+}
+
+auto LuNI::Format(TokenType type) -> std::string_view {
 	switch (type) {
 		case TokenType::KEYWORD_AND: return "and";
 		case TokenType::KEYWORD_BREAK: return "break";
@@ -51,6 +66,8 @@ auto LuNI::FormatTokenType(TokenType type) -> std::string_view {
 		case TokenType::SYMBOL_RIGHT_BRACE: return "}";
 		case TokenType::SYMBOL_LEFT_BRACKET: return "[";
 		case TokenType::SYMBOL_RIGHT_BRACKET: return "]";
+		// 分号在lua里没什么卵用，就是让lexer正确分割token而已
+		// 实际上（TODO 看下specs）跟空白符一模一样
 		case TokenType::SYMBOL_SEMICOLON: return ";";
 		case TokenType::SYMBOL_COLON: return ":";
 		case TokenType::SYMBOL_COMMA: return ",";
@@ -58,29 +75,14 @@ auto LuNI::FormatTokenType(TokenType type) -> std::string_view {
 		case TokenType::SYMBOL_2_DOT: return "..";
 		case TokenType::SYMBOL_3_DOT: return "...";
 
-		case TokenType::WHITESPACE: return "whitespace";
 		case TokenType::IDENTIFIER: return "identifier";
 		case TokenType::KEYWORD: return "keyword";
 		case TokenType::OPERATOR: return "operator";
 		case TokenType::STRING_LITERAL: return "string literal";
 		case TokenType::INTEGER_LITERAL: return "integer literal";
 		case TokenType::FLOATING_POINT_LITERAL: return "floating point literal";
-	}
-	return "unknown token type";
-}
 
-static auto fisrtKeywordID = static_cast<u32>(TokenType::KEYWORD_AND);
-static auto lastKeywordID = static_cast<u32>(TokenType::KEYWORD_WHILE);
-static auto firstOperID = static_cast<u32>(TokenType::OPERATOR_PLUS);
-static auto lastOperID = static_cast<u32>(TokenType::SYMBOL_3_DOT);
-auto LuNI::NormalizeTokenType(TokenType type) -> TokenType {
-	auto id = static_cast<u32>(type);
-	if (id >= fisrtKeywordID && id <= lastKeywordID) {
-		return TokenType::KEYWORD;
-	} else if (id >= firstOperID && id <= lastOperID) {
-		return TokenType::OPERATOR;
-	} else {
-		return type;
+		default: return "unknown token type";
 	}
 }
 
@@ -325,9 +327,8 @@ static auto TryLexIdentifierOrKeyword(LexingState& state) -> std::optional<Token
 		fmt::print("[Debug][Lexer.Iden] First char cannot be a part of an identifier, returning\n");
 #endif // #ifdef LUNI_DEBUG_INFO
 		return {};
-	} else {
-		state.Advance();
 	}
+	// 为了简化逻辑所以不直接使用Peek到的第一个字符，而是从头开始一个个地Take
 
 	// 接下来必然是identifier
 	auto pos = CurrentPosOf(state);
@@ -379,6 +380,10 @@ static auto TryLexOperator(LexingState& state) -> std::optional<Token> {
 
 		auto it = operators.find(view);
 		if (it != operators.end()) {
+			if (it->second == TokenType::SYMBOL_SEMICOLON) {
+				continue;
+			}
+
 #ifdef LUNI_DEBUG_INFO
 			fmt::print("[Debug][Lexer.Oper] Found matching operator '{}' with length {}\n", view, n);
 #endif // #ifdef LUNI_DEBUG_INFO
@@ -474,8 +479,6 @@ static auto TryLexIntegerLiteral(LexingState& state) -> std::optional<Token> {
 		fmt::print("[Debug][Lexer.Int] First char cannot be a part of an integer literal, returning\n");
 #endif // #ifdef LUNI_DEBUG_INFO
 		return {};
-	} else {
-		state.Advance();
 	}
 
 	auto pos = CurrentPosOf(state);
@@ -597,7 +600,7 @@ auto LuNI::DoLexing(
 		auto iden = TryLexIdentifierOrKeyword(state);
 		if (iden) {
 			if (verbose) {
-				fmt::print("Generated {} token '{}'\n", iden->type, iden->text);
+				fmt::print("[Lexer] Generated {} token '{}'\n", iden->type, iden->text);
 				fmt::print("\tstarting at {}\n", iden->pos);
 			}
 			state.AddToken(std::move(*iden));
@@ -607,7 +610,7 @@ auto LuNI::DoLexing(
 		auto str = TryLexString(state);
 		if (str) {
 			if (verbose) {
-				fmt::print("Generated string literal token '{}'\n", str->text);
+				fmt::print("[Lexer] Generated string literal token '{}'\n", str->text);
 				fmt::print("\tstarting at {}\n", str->pos);
 			}
 			state.AddToken(std::move(*str));
@@ -617,7 +620,7 @@ auto LuNI::DoLexing(
 		auto commentPos = TryLexComments(state);
 		if (commentPos) {
 			if (verbose) {
-				fmt::print("Discarded comments starting at {}\n", *commentPos);
+				fmt::print("[Lexer] Discarded comments starting at {}\n", *commentPos);
 			}
 			continue;
 		}
@@ -625,7 +628,7 @@ auto LuNI::DoLexing(
 		auto oper = TryLexOperator(state);
 		if (oper) {
 			if (verbose) {
-				fmt::print("Generated operator token '{}'\n", oper->text);
+				fmt::print("[Lexer] Generated operator token '{}'\n", oper->text);
 				fmt::print("\tstarting at {}\n", oper->pos);
 			}
 			state.AddToken(std::move(*oper));
@@ -634,6 +637,7 @@ auto LuNI::DoLexing(
 
 		auto nextChar = state.Peek().value_or('\0');
 		if (std::isspace(nextChar)) {
+			/*
 			auto hasWhitepsace = state.GetLastToken().type == TokenType::WHITESPACE;
 			// 因为AST生成器会检查换行符（“\n”），所以必须保留所有的换行符
 			// 为了简化AST生成器的逻辑（不需要处处检查并吞掉空白符），其他的空白符就不保留了
@@ -646,6 +650,8 @@ auto LuNI::DoLexing(
 				if (verbose) fmt::print("Generated whitespace token at {}\n", currentPos);
 				state.AddToken(Token{std::string{nextChar}, currentPos, TokenType::WHITESPACE});
 			}
+			*/
+			fmt::print("[Lexer] Discarded whitespace at {}\n", CurrentPosOf(state));
 			state.Advance();
 			continue;
 		}

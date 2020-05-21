@@ -47,7 +47,7 @@ template <typename F>
 class ScopeGuard {
 private:
 	F function;
-	bool cancelled = true;
+	bool cancelled = false;
 
 public:
 	ScopeGuard() = delete;

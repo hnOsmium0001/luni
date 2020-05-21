@@ -5,6 +5,38 @@
 
 using namespace LuNI;
 
+auto LuNI::Format(ASTType type) -> std::string_view {
+	switch (type) {
+		case ASTType::SCRIPT: return "script";
+
+		case ASTType::INTEGER_LITERAL: return "integer literal";
+		case ASTType::FLOATING_POINT_LITERAL: return "floating point literal";
+		case ASTType::STRING_LITERAL: return "string literal";
+		case ASTType::ARRAY_LITERAL: return "array literal";
+		case ASTType::METATABLE_LITERAL: return "metatable literal";
+
+		case ASTType::FUNCTION_DEFINITION: return "function definition";
+
+		case ASTType::FUNC_DEF_PARAMETER_LIST: return "function definition parameter list"; 
+		case ASTType::FUNC_DEF_PARAMETER: return "function definition parameter";
+
+		case ASTType::IF: return "if";
+		case ASTType::WHILE: return "while";
+		case ASTType::UNTIL: return "until";
+		case ASTType::FOR: return "for";
+		case ASTType::LOCAL_VARIABLE_DECLARATION: return "local var declaration";
+		case ASTType::VARIABLE_DECLARATION: return "var declaration";
+		case ASTType::STATEMENT_BLOCK: return "statements";
+
+		case ASTType::IDENTIFIER: return "identifier";
+
+		case ASTType::FUNCTION_CALL_PARAMS: return "function call parameter list"; 
+		case ASTType::FUNCTION_CALL: return "function call"; 
+
+		default: return "unknown AST type";
+	}
+}
+
 template <typename T, ASTType type>
 inline static auto MakeASTNode(T&& t) -> std::unique_ptr<ASTNode> {
 	auto res = std::make_unique<ASTNode>(type);
@@ -61,29 +93,48 @@ public:
 		std::vector<Token>::const_iterator ptr;
 	};
 
+	enum class Continuation {
+		CONTINUE,
+		BREAK_EOF,
+		BREAK_NO_CONSUMPTION,
+	};
+
 public:
 	std::unique_ptr<ASTNode> root;
 	std::vector<StandardError> errors;
 private:
 	std::reference_wrapper<const std::vector<Token>> tokens;
 	std::vector<Token>::const_iterator ptr;
+	usize lastIterRemaining = -1;
 
 public:
 	using Slice = LuNI::ConstSlice<std::vector<Token>>;
 
 	ParsingState(const std::vector<Token>& tokensIn) noexcept
-		: tokens{ std::cref(tokensIn) }, ptr{ tokensIn.begin() } {}
+		: root{ std::make_unique<ASTNode>(ASTType::SCRIPT) }, errors{},
+		tokens{ std::cref(tokensIn) }, ptr{ tokensIn.begin() } {}
 
 	ParsingState(const ParsingState& that) = delete;
 	ParsingState& operator=(const ParsingState& that) = delete;
 	ParsingState(ParsingState&& that) = default;
 	ParsingState& operator=(ParsingState&& that) = default;
 
-	auto ShouldContinue() const -> bool {
-		return this->HasNext(); // TODO
+	auto FetchContinuationState() -> Continuation {
+		auto& tokens = this->tokens.get();
+		auto remaining = std::distance(ptr, tokens.end());
+		if (remaining == lastIterRemaining) {
+			return remaining == 0
+				? Continuation::BREAK_EOF
+				: Continuation::BREAK_NO_CONSUMPTION;
+		} else {
+			lastIterRemaining = remaining;
+			return Continuation::CONTINUE;
+		}
 	}
 
-	auto HasNext() const -> bool { return ptr != tokens.get().end(); }
+	auto HasNext() const -> bool {
+		return ptr != tokens.get().end();
+	}
 
 	auto RecordSnapshot() const -> Snapshot {
 		return Snapshot{ptr};
@@ -100,18 +151,7 @@ public:
 		return result;
 	}
 
-	auto TakeIdentifier() -> const Token* {
-		if (!HasNext()) return nullptr;
-		auto token = &*ptr;
-		++ptr;
-		if (token->type != TokenType::IDENTIFIER) {
-			return nullptr;
-		} else {
-			return token;
-		}
-	}
-
-	/// 当下一个token为指定的类型时返回下一个token，否则返回nullptr
+	// 当下一个token为指定的类型时返回下一个token，否则返回nullptr
 	/// 只有返回非空指针的情况下才会移动`ptr`
 	auto TakeIf(TokenType type) -> const Token* {
 		if (!HasNext()) return nullptr;
@@ -120,6 +160,7 @@ public:
 			return nullptr;
 		} else {
 			++ptr;
+			//fmt::print("Fetched token {}\n", result->text);
 			return result;
 		}
 	}
@@ -158,13 +199,19 @@ static auto TryMatchExpression(ParsingState& state) -> std::unique_ptr<ASTNode> 
 	auto snapshotGuard = ScopeGuard([&]() { state.RestoreSnapshot(snapshot); });
 	
 	auto first = state.Take();
-	if (!first) return nullptr;
+	if (!first) return nullptr; // EOF
 	switch (first->type) {
-		case TokenType::STRING_LITERAL:
-		case TokenType::INTEGER_LITERAL:
-		case TokenType::FLOATING_POINT_LITERAL: {
+		case TokenType::STRING_LITERAL: {
 			snapshotGuard.Cancel();
 			return ASTNode::String(first->text);
+		}
+		case TokenType::INTEGER_LITERAL: {
+			snapshotGuard.Cancel();
+			return ASTNode::Integer(std::stoi(first->text));
+		}
+		case TokenType::FLOATING_POINT_LITERAL: {
+			snapshotGuard.Cancel();
+			return ASTNode::Float(std::stof(first->text));
 		}
 		default: break;
 	}
@@ -187,7 +234,7 @@ static auto MatchStatementBlock(ParsingState& state) -> std::unique_ptr<ASTNode>
 	auto result = std::make_unique<ASTNode>(ASTType::STATEMENT_BLOCK);
 	while (true) {
 		auto statement = TryMatchStatement(state);
-		if (statement == nullptr) break;
+		if (!statement) break;
 
 		result->AddChild(std::move(statement));
 
@@ -215,7 +262,6 @@ static auto MatchStatementBlock(ParsingState& state) -> std::unique_ptr<ASTNode>
 		// ```
 		// 是等价的
 
-		state.TakeIf(TokenType::WHITESPACE);
 		state.TakeIf(TokenType::SYMBOL_SEMICOLON);
 	}
 	return result;
@@ -227,22 +273,44 @@ static auto TryMatchIfStatement(ParsingState& state) -> std::unique_ptr<ASTNode>
 	auto snapshotGuard = ScopeGuard([&]() { state.RestoreSnapshot(snapshot); });
 
 	if (!state.TakeIf(TokenType::KEYWORD_IF)) return nullptr;
+#ifdef LUNI_DEBUG_INFO
+	fmt::print("[Debug][Parser.If] Found keyword 'if'\n");
+#endif // #ifdef LUNI_DEBUG_INFO
 
 	auto expr = TryMatchExpression(state);
 	if (!expr) return nullptr;
+#ifdef LUNI_DEBUG_INFO
+	fmt::print("[Debug][Parser.If] Found if conditional (expression node)\n");
+#endif // #ifdef LUNI_DEBUG_INFO
 
 	if (!state.TakeIf(TokenType::KEYWORD_THEN)) return nullptr;
+#ifdef LUNI_DEBUG_INFO
+	fmt::print("[Debug][Parser.If] Found keyword 'then'\n");
+#endif // #ifdef LUNI_DEBUG_INFO
 
 	auto body = MatchStatementBlock(state);
+#ifdef LUNI_DEBUG_INFO
+	fmt::print("[Debug][Parser.If] Found if body (statement block node)\n");
+#endif // #ifdef LUNI_DEBUG_INFO
 
 	auto elseOrEndKW = state.Take();
 	if (!elseOrEndKW) return nullptr;
 	switch (elseOrEndKW->type) {
 		case TokenType::KEYWORD_ELSE: {
+#ifdef LUNI_DEBUG_INFO
+			fmt::print("[Debug][Parser.If] Found keyword 'else'\n");
+#endif // #ifdef LUNI_DEBUG_INFO
+
 			auto elseBody = MatchStatementBlock(state);
 			if (!elseBody) return nullptr;
+#ifdef LUNI_DEBUG_INFO
+			fmt::print("[Debug][Parser.If] Found keyword 'end'\n");
+#endif // #ifdef LUNI_DEBUG_INFO
 
 			if (!state.TakeIf(TokenType::KEYWORD_END)) return nullptr;
+#ifdef LUNI_DEBUG_INFO
+			fmt::print("[Debug][Parser.If] Found else body (statement block node)\n");
+#endif // #ifdef LUNI_DEBUG_INFO
 
 			// 检测到完整的if-cond-body-else-body
 			auto ifNode = std::make_unique<ASTNode>(ASTType::IF);
@@ -250,16 +318,26 @@ static auto TryMatchIfStatement(ParsingState& state) -> std::unique_ptr<ASTNode>
 			ifNode->AddChild(std::move(body));
 			ifNode->AddChild(std::move(elseBody));
 			
+#ifdef LUNI_DEBUG_INFO
+			fmt::print("[Debug][Parser.If] Generated if statement with an else branch\n");
+#endif // #ifdef LUNI_DEBUG_INFO
+
 			snapshotGuard.Cancel();
 			return ifNode;
 		}
 		case TokenType::KEYWORD_END: {
-			if (!state.TakeIf(TokenType::KEYWORD_END)) return nullptr;
+#ifdef LUNI_DEBUG_INFO
+			fmt::print("[Debug][Parser.If] Found keyword 'end'\n");
+#endif // #ifdef LUNI_DEBUG_INFO
 
 			// 不带else语句的if-cond-body
 			auto ifNode = std::make_unique<ASTNode>(ASTType::IF);
 			ifNode->AddChild(std::move(expr));
 			ifNode->AddChild(std::move(body));
+
+#ifdef LUNI_DEBUG_INFO
+			fmt::print("[Debug][Parser.If] Generated if statement with only `true` branch\n");
+#endif // #ifdef LUNI_DEBUG_INFO
 
 			snapshotGuard.Cancel();
 			return ifNode;
@@ -318,7 +396,7 @@ static auto TryMatchForStatement(ParsingState& state) -> std::unique_ptr<ASTNode
 
 	if (!state.TakeIf(TokenType::KEYWORD_FOR)) return nullptr;
 
-	auto varName = state.TakeIdentifier();
+	auto varName = state.TakeIf(TokenType::IDENTIFIER);
 	if (!varName) return nullptr;
 
 	if (state.Take()->type != TokenType::KEYWORD_IN) return nullptr;
@@ -361,11 +439,12 @@ static auto TryMatchVariableDeclaration(ParsingState& state) -> std::unique_ptr<
 	auto snapshot = state.RecordSnapshot();
 	auto snapshotGuard = ScopeGuard([&]() { state.RestoreSnapshot(snapshot); });
 
+	// 可选local修饰符
 	auto type = state.TakeIf(TokenType::KEYWORD_LOCAL) == nullptr
 		? ASTType::VARIABLE_DECLARATION
 		: ASTType::LOCAL_VARIABLE_DECLARATION;
 
-	auto name = state.TakeIdentifier();
+	auto name = state.TakeIf(TokenType::IDENTIFIER);
 	if (!name) return nullptr;
 
 	if (!state.TakeIf(TokenType::OPERATOR_ASSIGN)) return nullptr;
@@ -401,7 +480,7 @@ static auto TryMatchFunctionCall(ParsingState& state) -> std::unique_ptr<ASTNode
 	auto snapshot = state.RecordSnapshot();
 	auto snapshotGuard = ScopeGuard([&]() { state.RestoreSnapshot(snapshot); });
 	
-	auto funcName = state.TakeIdentifier();
+	auto funcName = state.TakeIf(TokenType::IDENTIFIER);
 	if (!funcName) return nullptr;
 
 	if (!state.TakeIf(TokenType::SYMBOL_LEFT_PAREN)) return nullptr;
@@ -443,7 +522,7 @@ static auto TryMatchStatement(ParsingState& state) -> std::unique_ptr<ASTNode> {
 static auto MatchFunctionDefParams(ParsingState& state) -> std::unique_ptr<ASTNode> {
 	auto params = std::make_unique<ASTNode>(ASTType::FUNCTION_CALL_PARAMS);
 	while (true) {
-		auto param = state.TakeIdentifier();
+		auto param = state.TakeIf(TokenType::IDENTIFIER);
 		if (!param) break;
 
 		params->AddChild(ASTNode::Identifier(param->text));
@@ -460,12 +539,12 @@ static auto TryMatchFunctionDefinition(ParsingState& state) -> std::unique_ptr<A
 
 	if (!state.TakeIf(TokenType::KEYWORD_FUNCTION)) return nullptr;
 
-	auto name = state.TakeIdentifier();
+	auto name = state.TakeIf(TokenType::IDENTIFIER);
 	if (!name) return nullptr;
 
-	if (!state.TakeIf(LuNI::TokenType::SYMBOL_LEFT_PAREN)) return nullptr;
+	if (!state.TakeIf(TokenType::SYMBOL_LEFT_PAREN)) return nullptr;
 	auto params = MatchFunctionDefParams(state);
-	if (!state.TakeIf(LuNI::TokenType::SYMBOL_RIGHT_PAREN)) return nullptr;
+	if (!state.TakeIf(TokenType::SYMBOL_RIGHT_PAREN)) return nullptr;
 
 	auto body = MatchStatementBlock(state);
 
@@ -477,7 +556,7 @@ static auto TryMatchFunctionDefinition(ParsingState& state) -> std::unique_ptr<A
 	funcDef->AddChild(std::move(body));
 
 	snapshotGuard.Cancel();
-	return nullptr;
+	return funcDef;
 }
 
 static auto TryMatchDefinition(ParsingState& state) -> std::unique_ptr<ASTNode> {
@@ -493,12 +572,24 @@ auto LuNI::DoParsing(
 ) -> ParsingResult {
 	auto verbose = (*args)["--verbose-parsing"] == true;
 
-	fmt::print("here");
 	ParsingState state{tokens};
-	while (state.ShouldContinue()) {
+	while (true) {
+		auto cont = state.FetchContinuationState();
+		switch (cont) {
+			case ParsingState::Continuation::CONTINUE:
+				break;
+			case ParsingState::Continuation::BREAK_EOF:
+				if (verbose) fmt::print("[Parser] Reached end of file when parsing, finishing normally");
+				goto end;
+			case ParsingState::Continuation::BREAK_NO_CONSUMPTION:
+				if (verbose) fmt::print("[Parser] No tokens are able to be consumed, finishing with error");
+				goto end;
+		}
+
 		if (auto node = TryMatchDefinition(state)) {
 			if (verbose) {
 				fmt::print("Collected top-level definition\n");
+				fmt::print("\tType: {}\n", node->type);
 			}
 			state.root->AddChild(std::move(node));
 			continue;
@@ -506,12 +597,14 @@ auto LuNI::DoParsing(
 		if (auto node = TryMatchStatement(state)) {
 			if (verbose) {
 				fmt::print("Collected top-level statement\n");
+				fmt::print("\tType: {}\n", node->type);
 			}
 			state.root->AddChild(std::move(node));
 			continue;
 		}
 	}
 
+end:
 	return state.FinishParsing();
 }
 
