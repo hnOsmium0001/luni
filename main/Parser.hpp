@@ -128,8 +128,8 @@ auto Format(ASTType type) -> std::string_view;
 
 class ASTNode {
 public:
+	// 所有的子类型必须支持fmt::format
 	using ExtraData = std::variant<
-		std::monostate,
 		u32,
 		f32,
 		std::string

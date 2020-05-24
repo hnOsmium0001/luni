@@ -1,6 +1,7 @@
 #include <stdexcept>
 #include <utility>
 #include <functional>
+#include <iostream>
 #include "Parser.hpp"
 
 using namespace LuNI;
@@ -86,6 +87,29 @@ auto ASTNode::GetExtraData() -> ExtraData& {
 	return const_cast<ExtraData&>(static_cast<const ASTNode&>(*this).GetExtraData());
 }
 
+static auto PrintPadding(char padding, u32 size) -> void {
+	for (u32 i = 0; i < size; ++i) {
+		std::cout << padding;
+	}
+}
+
+static auto PrintNode(const ASTNode& node, u32 indent = 0) -> void {
+	PrintPadding('\t', indent);
+
+	if (auto& ptr = node.extraData) {
+		auto extras = std::visit(
+			[&](auto&& value) { return fmt::format("'{}'", value); },
+			*ptr);
+		fmt::print("Node(type = {}, extras = {})\n", node.type, extras);
+	} else {
+		fmt::print("Node(type = {})\n", node.type);
+	}
+
+	for (auto& child : node.children) {
+		PrintNode(*child, indent + 1);
+	}
+}
+
 namespace {
 class ParsingState {
 public:
@@ -111,8 +135,9 @@ public:
 	using Slice = LuNI::ConstSlice<std::vector<Token>>;
 
 	ParsingState(const std::vector<Token>& tokensIn) noexcept
-		: root{ std::make_unique<ASTNode>(ASTType::SCRIPT) }, errors{},
-		tokens{ std::cref(tokensIn) }, ptr{ tokensIn.begin() } {}
+		: root{ std::make_unique<ASTNode>(ASTType::SCRIPT) }
+		, errors{}
+		, tokens{ std::cref(tokensIn) }, ptr{ tokensIn.begin() } {}
 
 	ParsingState(const ParsingState& that) = delete;
 	ParsingState& operator=(const ParsingState& that) = delete;
@@ -160,7 +185,6 @@ public:
 			return nullptr;
 		} else {
 			++ptr;
-			//fmt::print("Fetched token {}\n", result->text);
 			return result;
 		}
 	}
@@ -213,7 +237,11 @@ static auto TryMatchExpression(ParsingState& state) -> std::unique_ptr<ASTNode> 
 			snapshotGuard.Cancel();
 			return ASTNode::Float(std::stof(first->text));
 		}
-		default: break;
+		default: {
+			// 重置之前那个吃掉的token
+			state.RestoreSnapshot(snapshot);
+			break;
+		}
 	}
 
 	auto funcCall = TryMatchFunctionCall(state);
@@ -497,6 +525,9 @@ static auto TryMatchFunctionCall(ParsingState& state) -> std::unique_ptr<ASTNode
 }
 
 static auto TryMatchStatement(ParsingState& state) -> std::unique_ptr<ASTNode> {
+	auto funcCall = TryMatchFunctionCall(state);
+	if (funcCall) return funcCall;
+
 	auto ifSt = TryMatchIfStatement(state);
 	if (ifSt) return ifSt;
 
@@ -511,9 +542,6 @@ static auto TryMatchStatement(ParsingState& state) -> std::unique_ptr<ASTNode> {
 
 	auto varDec = TryMatchVariableDeclaration(state);
 	if (varDec) return varDec;
-
-	auto funcCall = TryMatchFunctionCall(state);
-	if (funcCall) return funcCall;
 
 	return nullptr;
 }
@@ -588,8 +616,10 @@ auto LuNI::DoParsing(
 
 		if (auto node = TryMatchDefinition(state)) {
 			if (verbose) {
-				fmt::print("Collected top-level definition\n");
-				fmt::print("\tType: {}\n", node->type);
+				fmt::print("Collected top-level definition:\n");
+				PrintNode(*node);
+				fmt::print("\n");
+				//fmt::print("Tok: {}\n", state.Take()->text);
 			}
 			state.root->AddChild(std::move(node));
 			continue;
@@ -597,7 +627,8 @@ auto LuNI::DoParsing(
 		if (auto node = TryMatchStatement(state)) {
 			if (verbose) {
 				fmt::print("Collected top-level statement\n");
-				fmt::print("\tType: {}\n", node->type);
+				PrintNode(*node);
+				fmt::print("\n");
 			}
 			state.root->AddChild(std::move(node));
 			continue;
