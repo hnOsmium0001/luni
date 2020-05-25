@@ -9,28 +9,113 @@
 using namespace LuNI;
 
 namespace {
+class LuaVariable {
+public:
+};
+
+template <typename Callable, u32 id = 0>
+struct IDFunc;
+
+template <typename Return, typename... Args, u32 id>
+struct IDFunc<auto(Args...) -> Return, id> {
+	using PtrType = auto(*)(Args...) -> Return;
+
+	PtrType ptr;
+
+	IDFunc(PtrType ptr) noexcept : ptr{ ptr } {}
+	operator PtrType() const { return ptr; }
+};
+
 class LuaFunction {
+public:
 	std::variant<
 		std::reference_wrapper<const ASTNode>,
-		auto() -> void, // main :: () -> ()
-		auto(std::string_view) -> void // print :: (string) -> ()
+		IDFunc<auto(std::string_view) -> void>, // print :: (string) -> ()
+		IDFunc<auto(float) -> float, 0>, // sqrt :: (float) -> float
+		IDFunc<auto(float) -> float, 1>, // sin :: (float) -> float
+		IDFunc<auto(float) -> float, 2>, // cos :: (float) -> float
+		IDFunc<auto(float) -> float, 3> // tan :: (float) -> float
 	> def;
+
+public:
+	auto Invoke(std::vector<LuaVariable> params) -> LuaVariable {
+		return LuaVariable{}; // TODO
+	}
 };
 
 class StackFrame {
 private:
 	std::string_view name;
-	std::reference_wrapper<const LuaFunction> owner;
+	std::reference_wrapper<const LuaFunction> source;
 public:
 	u32 insCounter = 0;
 
 public:
 	StackFrame(std::string_view name, const LuaFunction& node) noexcept
 		: name{ std::move(name) }
-		, owner{ std::cref(node) } {}
+		, source{ std::cref(node) } {}
 
 	auto Name() const -> std::string_view { return name; }
-	auto Owner() const -> const LuaFunction& { return owner.get(); }
+	auto Source() const -> const LuaFunction& { return source.get(); }
+};
+
+class ASTWalker {
+private:
+	std::stack<StackFrame> callStack;
+	std::unordered_map<std::string_view, LuaFunction> functionDefs;
+	LuaFunction main;
+	bool verbose;
+
+public:
+	ASTWalker(argparse::ArgumentParser& args, const ASTNode& root)
+		: functionDefs{
+			{ "print", LuaFunction{ASTWalker::Print} },
+			{ "sqrt", LuaFunction{IDFunc<auto(float) -> float, 0>{ASTWalker::Sqrt}} },
+			{ "sin", LuaFunction{IDFunc<auto(float) -> float, 1>{ASTWalker::Sin}} },
+			{ "cos", LuaFunction{IDFunc<auto(float) -> float, 2>{ASTWalker::Cos}} },
+			{ "tan", LuaFunction{IDFunc<auto(float) -> float, 3>{ASTWalker::Tan}} }
+		}
+		, main{ LuaFunction{root} }
+		, verbose{ args["--verbose-execution"] == true }
+	{
+		callStack.push(StackFrame{"<main>", std::cref(main)});
+	}
+
+	auto Run() -> tl::expected<u32, RuntimeError> {
+		return 0;
+	}
+
+private:
+	static auto Print(std::string_view text) -> void {
+		fmt::print("{}\n", text);
+	}
+	static auto Sqrt(float f) -> float {
+		return static_cast<float>(sqrt(f));
+	}
+	static auto Sin(float f) -> float {
+		return static_cast<float>(sin(f));
+	}
+	static auto Cos(float f) -> float {
+		return static_cast<float>(cos(f));
+	}
+	static auto Tan(float f) -> float {
+		return static_cast<float>(tan(f));
+	}
+
+	auto DefineFunction(const ASTNode& funcDefNode) -> void {
+		auto& nameNode = *funcDefNode.children[0];
+		auto& funcName = std::get<std::string>(*nameNode.extraData);
+		functionDefs.insert({funcName, LuaFunction{funcDefNode}});
+	}
+
+	auto PushFuncCall(const ASTNode& callerNode) -> void {
+		auto& calleeName = std::get<std::string>(*callerNode.children[0]->extraData);
+		auto it = functionDefs.find(calleeName);
+		if (it == functionDefs.end()) return;
+		auto& calleeNode = it->second;
+
+		callStack.push(StackFrame{calleeName, calleeNode});
+	}
 };
 }
 
@@ -38,52 +123,8 @@ auto LuNI::RunProgram_WalkAST(
 	argparse::ArgumentParser& args,
 	const ASTNode& root
 ) -> void {
-	auto callStack = std::stack<StackFrame>{};
-	callStack.push(StackFrame::NewMain(root));
-	auto functions = std::unordered_map<std::string_view, const ASTNode*>{}; 
-
-	while (!callStack.empty()) {
-		auto& stackFrame = callStack.top();
-		auto& node = stackFrame.Owner();
-
-		switch (node.type) {
-			case ASTType::FUNCTION_DEFINITION:
-				auto& paramList = *node.children[1];
-				auto& body = *node.children[2];
-			case ASTType::SCRIPT: {
-				auto& ins = *node.children[stackFrame.insCounter];
-				auto& insName = std::get<std::string>(*ins.children[0]);
-				++stackFrame.insCounter;
-
-				if (ins.type == ASTType::FUNCTION_DEFINITION) {
-					// 创建函数定义
-					auto& funcName = std::get<std::string>(*ins.extraData);
-					functions.insert({funcName, &ins});
-				} else if (insName == "print") {
-					// TODO
-					auto& text = std::get<std::string>(*paramList.children[0]->extraData);
-					fmt::print("{}\n", text);
-				} else {
-					// 调用函数（ASTType::FUNCTION_CALL -> ASTType::FUNCTION_DEFINITION lookup）
-					auto& funcCall = ins; // 重命名
-					auto it = functions.find(std::get<std::string>(*funcCall.extraData));
-					if (it == functions.end()) return; // TODO
-
-					auto& funcDef = *it->second;
-					callStack.push(StackFrame::NewFunc(funcDef));
-				}
-
-				if (stackFrame.insCounter >= node.children.size()) {
-					break;
-				} else {
-					continue;
-				}
-			}
-			default: break;
-		}
-
-		callStack.pop();
-	}
+	auto interpreter = ASTWalker{args, root};
+	interpreter.Run();
 }
 
 auto LuNI::RunProgram(
