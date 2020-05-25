@@ -43,7 +43,7 @@ auto Err(u32 errorCode, std::string msg) -> tl::expected<LuNI::BytecodeProgram, 
 }
 
 auto ProgramFromSource(
-	argparse::ArgumentParser* args,
+	argparse::ArgumentParser& args,
 	const std::string& path
 ) -> tl::expected<LuNI::BytecodeProgram, LuNI::StandardError> {
 	auto ifs = std::ifstream{path};
@@ -65,13 +65,13 @@ auto ProgramFromSource(
 	auto ast = LuNI::DoParsing(args, tokens);
 	auto& astRoot = *ast.root.get();
 
-	LuNI::RunProgram_WalkAST(args, &astRoot);
+	LuNI::RunProgram_WalkAST(args, astRoot);
 
 	return LuNI::BytecodeProgram{};
 }
 
 auto ProgramFromBytecode(
-	argparse::ArgumentParser* args,
+	argparse::ArgumentParser& args,
 	const std::string& path
 ) -> tl::expected<LuNI::BytecodeProgram, LuNI::StandardError> {
 	auto ifs = std::ifstream{path};
@@ -98,12 +98,12 @@ int main(int argc, char* argv[]) {
 
 	for (const auto& input : inputs) {
 		auto res = inputBytecode
-			? ProgramFromBytecode(&args, input)
-			: ProgramFromSource(&args, input);
+			? ProgramFromBytecode(args, input)
+			: ProgramFromSource(args, input);
 		if (!res) continue;
 		auto program = res.value();
 
-		LuNI::RunProgram(&args, program);
+		LuNI::RunProgram(args, program);
 	}
 
 	return 0;

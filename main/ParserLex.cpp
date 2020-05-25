@@ -590,10 +590,10 @@ static auto TryLexComments(LexingState& state) -> std::optional<TokenPos> {
 }
 
 auto LuNI::DoLexing(
-	argparse::ArgumentParser* args,
+	argparse::ArgumentParser& args,
 	const std::string& text
 ) -> std::vector<Token> {
-	auto verbose = (*args)["--verbose-lexing"] == true;
+	auto verbose = args["--verbose-lexing"] == true;
 
 	LexingState state{text};
 	while (state.HasNext()) {

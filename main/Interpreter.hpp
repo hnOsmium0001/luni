@@ -7,13 +7,13 @@
 namespace LuNI {
 
 auto RunProgram_WalkAST(
-	argparse::ArgumentParser* args,
-	ASTNode* root
+	argparse::ArgumentParser& args,
+	const ASTNode& root
 ) -> void;
 
 auto RunProgram(
-	argparse::ArgumentParser* args,
-	BytecodeProgram opcodes
+	argparse::ArgumentParser& args,
+	const BytecodeProgram& opcodes
 ) -> void;
 
 } // namespace LuNI

@@ -114,6 +114,10 @@ struct StandardError {
 	std::string msg;
 };
 
+struct RuntimeError {
+	// TODO stacktrace
+};
+
 namespace ErrorCodes {
 	constexpr u32 INPUT_FILE_NOT_FOUND = 0;
 

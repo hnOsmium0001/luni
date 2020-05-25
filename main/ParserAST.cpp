@@ -595,10 +595,10 @@ static auto TryMatchDefinition(ParsingState& state) -> std::unique_ptr<ASTNode> 
 }
 
 auto LuNI::DoParsing(
-	argparse::ArgumentParser* args,
+	argparse::ArgumentParser& args,
 	const std::vector<Token>& tokens
 ) -> ParsingResult {
-	auto verbose = (*args)["--verbose-parsing"] == true;
+	auto verbose = args["--verbose-parsing"] == true;
 
 	ParsingState state{tokens};
 	while (true) {
@@ -626,7 +626,7 @@ auto LuNI::DoParsing(
 		}
 		if (auto node = TryMatchStatement(state)) {
 			if (verbose) {
-				fmt::print("Collected top-level statement\n");
+				fmt::print("Collected top-level statement:\n");
 				PrintNode(*node);
 				fmt::print("\n");
 			}

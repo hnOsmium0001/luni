@@ -185,12 +185,12 @@ public:
 
 
 auto DoParsing(
-	argparse::ArgumentParser* args,
+	argparse::ArgumentParser& args,
 	const std::vector<Token>& tokens
 ) -> ParsingResult;
 
 auto DoLexing(
-	argparse::ArgumentParser* args,
+	argparse::ArgumentParser& args,
 	const std::string& text
 ) -> std::vector<Token>;
 
