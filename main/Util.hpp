@@ -71,23 +71,21 @@ template <typename Iterator>
 class Slice {
 private:
 	Iterator beginIt;
-	Iterator endIt;
+	usize size;
 
 public:
 	static auto None(Iterator end) -> Slice {
-		return Slice{end, end};
+		return Slice{end, 0};
 	}
 	static auto Between(Iterator begin, Iterator end) -> Slice {
-		return Slice{begin, end};
+		return Slice{begin, std::distance(begin, end)};
 	}
 	static auto At(Iterator begin, usize size) -> Slice {
-		auto end = begin; // 复制
-		std::advance(end, size);
-		return Slice{begin, end};
+		return Slice{begin, size};
 	}
 
-	Slice(Iterator begin, Iterator end)
-		: beginIt{ begin }, endIt{ end } {}
+	Slice(Iterator begin, usize size)
+		: beginIt{ begin }, size{ size } {}
 
 	Slice(const Slice& that) = default;
 	Slice& operator=(const Slice& that) = default;
@@ -98,9 +96,9 @@ public:
 		return beginIt[index];
 	}
 	auto begin() const -> Iterator { return beginIt; }
-	auto end() const -> Iterator { return endIt; }
+	auto end() const -> Iterator { return beginIt + size; }
 
-	auto Size() -> usize { return std::distance(beginIt, endIt); }
+	auto Size() -> usize { return size; }
 };
 
 template <typename Container>
@@ -108,12 +106,13 @@ using RegularSlice = Slice<typename Container::iterator>;
 template <typename Container>
 using ConstSlice = Slice<typename Container::const_iterator>;
 
-/// General error wrapper around error ID and error message
+// Parser/Lexer错误，包含错误ID和信息
 struct StandardError {
 	u32 id;
 	std::string msg;
 };
 
+/// 解释器运行时错误
 struct RuntimeError {
 	// TODO stacktrace
 };

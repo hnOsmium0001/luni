@@ -27,7 +27,8 @@ add_executable(luni
 	main/ParserLex.cpp
 	main/ParserAST.cpp
 	main/Interpreter.hpp
-	main/Interpreter.cpp
+	main/InterpreterAST.cpp
+	main/InterpreterBytecode.cpp
 	main/Main.cpp
 )
 target_link_libraries(luni ${CONAN_LIBS})
