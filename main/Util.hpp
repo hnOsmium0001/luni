@@ -25,25 +25,28 @@ using usize = size_t;
 
 namespace LuNI {
 
-template <typename T, typename Func>
+template <class T, class Func>
 auto operator|(const std::optional<T>& opt, Func&& func) -> std::optional<decltype(func(*opt))> {
 	return opt ? func(*opt) : std::nullopt;
 }
-template <typename Func, typename... Ts>
+template <class Func, class... Ts>
 auto Fmap(Func&& func, const std::optional<Ts>&... opts) -> std::optional<decltype(func((*opts)...))> {
 	return (... && opts) ? func((*opts)...) : std::nullopt;
 }
 
-template <typename T, typename Func>
+template <class T, class Func>
 auto operator>>(const std::optional<T>& opt, Func&& func) -> decltype(func(*opt)) {
 	return opt ? func(*opt) : std::nullopt;
 }
-template <typename Func, typename... Ts>
+template <class Func, class... Ts>
 auto Bind(Func&& func, const std::optional<Ts>&... opts) -> decltype(func((*opts)...)) {
 	return (... && opts) ? func((*opts)...) : std::nullopt;
 }
 
-template <typename F>
+template <class... Ts> struct Overloaded : Ts... { using Ts::operator()...; }
+template <class... Ts> Overloaded(Ts...) -> Overloaded<Ts...>;
+
+template <class F>
 class ScopeGuard {
 private:
 	F function;
@@ -56,8 +59,14 @@ public:
 	}
 	ScopeGuard(const ScopeGuard&) = delete;
 	ScopeGuard& operator=(const ScopeGuard&) = delete;
-	ScopeGuard(ScopeGuard&&) = delete;
-	ScopeGuard& operator=(ScopeGuard&&) = delete;
+	ScopeGuard(ScopeGuard&& that)
+		: function{ std::move(that.function) } {
+		that.Cancel();
+	}
+	ScopeGuard& operator=(ScopeGuard&& that) {
+		this->function = std::move(that.function);
+		that.Cancel();
+	}
 	~ScopeGuard() noexcept {
 		if (!cancelled) {
 			function();
@@ -66,45 +75,6 @@ public:
 
 	auto Cancel() -> void { this->cancelled = true; }
 };
-
-template <typename Iterator>
-class Slice {
-private:
-	Iterator beginIt;
-	usize size;
-
-public:
-	static auto None(Iterator end) -> Slice {
-		return Slice{end, 0};
-	}
-	static auto Between(Iterator begin, Iterator end) -> Slice {
-		return Slice{begin, std::distance(begin, end)};
-	}
-	static auto At(Iterator begin, usize size) -> Slice {
-		return Slice{begin, size};
-	}
-
-	Slice(Iterator begin, usize size)
-		: beginIt{ begin }, size{ size } {}
-
-	Slice(const Slice& that) = default;
-	Slice& operator=(const Slice& that) = default;
-	Slice(Slice&& that) = default;
-	Slice& operator=(Slice&& that) = default;
-
-	auto operator[](usize index) -> typename std::iterator_traits<Iterator>::reference {
-		return beginIt[index];
-	}
-	auto begin() const -> Iterator { return beginIt; }
-	auto end() const -> Iterator { return beginIt + size; }
-
-	auto Size() -> usize { return size; }
-};
-
-template <typename Container>
-using RegularSlice = Slice<typename Container::iterator>;
-template <typename Container>
-using ConstSlice = Slice<typename Container::const_iterator>;
 
 // Parser/Lexer错误，包含错误ID和信息
 struct StandardError {

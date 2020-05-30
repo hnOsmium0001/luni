@@ -2,9 +2,9 @@
 
 using namespace LuNI;
 
-auto RunProgram(
+auto LuNI::RunProgram(
 	argparse::ArgumentParser& args,
-	BytecodeProgram opcodes
+	const BytecodeProgram& opcodes
 ) -> void {
 }
 

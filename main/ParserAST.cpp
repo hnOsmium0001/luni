@@ -2,6 +2,7 @@
 #include <utility>
 #include <functional>
 #include <iostream>
+#include <hn/Slice.hpp>
 #include "Parser.hpp"
 
 using namespace LuNI;
@@ -132,7 +133,7 @@ private:
 	usize lastIterRemaining = -1;
 
 public:
-	using Slice = LuNI::ConstSlice<std::vector<Token>>;
+	using Slice = hn::ConstSlice<std::vector<Token>>;
 
 	ParsingState(const std::vector<Token>& tokensIn) noexcept
 		: root{ std::make_unique<ASTNode>(ASTType::SCRIPT) }
