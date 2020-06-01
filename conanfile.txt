@@ -2,6 +2,7 @@
 fmt/6.1.2
 argparse/2.1
 tl-expected/20190710
+tsl-ordered-map/0.8.1@tessil/stable
 slice/0.2.0@hnosmium0001/testing
 
 [generators]

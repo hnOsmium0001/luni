@@ -43,7 +43,7 @@ auto Bind(Func&& func, const std::optional<Ts>&... opts) -> decltype(func((*opts
 	return (... && opts) ? func((*opts)...) : std::nullopt;
 }
 
-template <class... Ts> struct Overloaded : Ts... { using Ts::operator()...; }
+template <class... Ts> struct Overloaded : Ts... { using Ts::operator()...; };
 template <class... Ts> Overloaded(Ts...) -> Overloaded<Ts...>;
 
 template <class F>

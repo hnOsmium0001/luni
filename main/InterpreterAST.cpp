@@ -6,32 +6,40 @@
 #include <unordered_map>
 #include <stack>
 #include <tl/expected.hpp>
+#include <tsl/ordered_map.h>
 #include <hn/Slice.hpp>
+#include "Util.hpp"
 #include "Parser.hpp"
 #include "Interpreter.hpp"
 
 using namespace LuNI;
 
 namespace {
-class LuaVariable {
+// TODO gc + 默认引用传参
+class LuaValue {
 public:
 	std::any val;
 
-	static auto Wrap(std::any val) -> LuaVariable {
-		return LuaVariable{std::move(val)};
+	static auto Wrap(std::any val) -> LuaValue {
+		return LuaValue{std::move(val)};
+	}
+
+	static auto Eval(const ASTNode& exprNode) -> LuaValue {
+		return {}; // TODO
 	}
 };
 
-using LuaVariableStore = std::vector<LuaVariable>;
+using LuaVariableStore = tsl::ordered_map<std::string_view, LuaValue>;
+using LuaVariable = LuaVariableStore::value_type;
 
-const auto LUA_NIL = LuaVariable{};
-const auto LUA_TRUE = LuaVariable{true};
-const auto LUA_FALSE = LuaVariable{false};
+const auto LUA_NIL = LuaValue{};
+const auto LUA_TRUE = LuaValue{true};
+const auto LUA_FALSE = LuaValue{false};
 
 class SystemFunction {
 public:
 	using P = hn::ConstSlice<LuaVariableStore>&;
-	using ErasedFunction = auto(*)(P params) -> LuaVariable;
+	using ErasedFunction = auto(*)(P params) -> LuaValue;
 
 private:
 	ErasedFunction ptr;
@@ -42,45 +50,45 @@ public:
 };
 
 namespace SystemImpl {
-	auto Print(SystemFunction::P params) -> LuaVariable {
-		auto& text = std::any_cast<const std::string&>(params[0].val);
+	auto Print(SystemFunction::P params) -> LuaValue {
+		auto& text = std::any_cast<const std::string&>(params[0].second.val);
 		return LUA_NIL;
 	}
 
-	auto Sqrt(SystemFunction::P& params) -> LuaVariable {
-		auto in = std::any_cast<float>(params[0].val);
-		return LuaVariable{static_cast<float>(std::sqrt(in))};
+	auto Sqrt(SystemFunction::P& params) -> LuaValue {
+		auto in = std::any_cast<f32>(params[0].second.val);
+		return LuaValue{static_cast<f32>(std::sqrt(in))};
 	}
 
-	auto Sin(SystemFunction::P& params) -> LuaVariable {
-		auto in = std::any_cast<float>(params[0].val);
-		return LuaVariable{static_cast<float>(std::sin(in))};
+	auto Sin(SystemFunction::P& params) -> LuaValue {
+		auto in = std::any_cast<f32>(params[0].second.val);
+		return LuaValue{static_cast<f32>(std::sin(in))};
 	}
 
-	auto Cos(SystemFunction::P& params) -> LuaVariable {
-		auto in = std::any_cast<float>(params[0].val);
-		return LuaVariable{static_cast<float>(std::cos(in))};
+	auto Cos(SystemFunction::P& params) -> LuaValue {
+		auto in = std::any_cast<f32>(params[0].second.val);
+		return LuaValue{static_cast<f32>(std::cos(in))};
 	}
 
-	auto Tan(SystemFunction::P& params) -> LuaVariable {
-		auto in = std::any_cast<float>(params[0].val);
-		return LuaVariable{static_cast<float>(std::tan(in))};
+	auto Tan(SystemFunction::P& params) -> LuaValue {
+		auto in = std::any_cast<f32>(params[0].second.val);
+		return LuaValue{static_cast<f32>(std::tan(in))};
 	}
 }
 
+class StackFrame;
 class LuaFunctionDef {
 public:
-	struct Source {
-		std::reference_wrapper<const ASTNode> impl;
-	};
-
 	using NodeFunction = std::reference_wrapper<const ASTNode>;
 	using Impl = std::variant<NodeFunction, SystemFunction>;
-	using YieldResult = std::variant<
-		std::reference_wrapper<const ASTNode>, // 函数调用
-		Source, // 函数定义，喂给StackFrame
-		LuaVariable
-    >;
+
+	struct FuncCall {
+		std::string_view calleeName;
+		/// 函数调用表达式所提供的所有参数，不足的将由Interpreter填充成LUA_NIL
+		/// 而多余的则会被直接扔掉
+		std::vector<LuaValue> params;
+	};
+	using YieldResult = std::variant<FuncCall, LuaValue>;
 
 	Impl impl;
 	u32 paramsCount;
@@ -89,39 +97,12 @@ public:
 		: impl{ std::move(impl) }
 		, paramsCount{ std::move(paramsCount) } {}
 
-	// 注意LuaFunction是无状态的函数定义，LuaFunction的“实例”就是Interpreter::StackFrame
-	auto Invoke(
-		hn::ConstSlice<LuaVariableStore>& params,
-		hn::ConstSlice<LuaVariableStore>& locals,
-		u32* insCounter
-	) const -> YieldResult {
-		if (impl.index() != 0) {
-			return std::get<SystemFunction>(impl)(params);
-		}
-
-		while (true) {
-			auto& node = std::get<NodeFunction>(impl).get();
-			if (*insCounter >= node.children.size()) {
-				return LUA_NIL;
-			}
-
-			auto& childNode = *node.children[*insCounter];
-			switch (childNode.type) {
-				case ASTType::FUNCTION_CALL: {
-					// TODO
-					return childNode;
-				}
-				// TODO
-				default: throw std::runtime_error(fmt::format("Unsupported type {} when executing function body", childNode.type));
-			}
-
-			++*insCounter;
-		}
-		return LUA_NIL;
-	}
+	// 注意LuaFunctionDef是无状态的函数定义，LuaFunction的“实例”是Interpreter::StackFrame
+	auto Invoke(StackFrame& stackFrame, LuaVariableStore& globalVars) const -> YieldResult;
 };
 
-struct StackFrame {
+class StackFrame {
+public:
 	std::string_view name;
 	std::reference_wrapper<const LuaFunctionDef> source;
 
@@ -137,21 +118,85 @@ struct StackFrame {
 		, params{ hn::SliceOf(std::as_const(vars), 0, def.paramsCount) }
 		, locals{ hn::SliceOf(std::as_const(vars), def.paramsCount, vars.size()) } {}
 
-	StackFrame(const LuaFunctionDef& def, u32 paramsCount) noexcept
+	StackFrame(const LuaFunctionDef& def) noexcept
 		: name{ std::get<std::string>(
 			*std::get<LuaFunctionDef::NodeFunction>(def.impl).get().extraData
 		)}
 		, source{ std::cref(def) }
-		, vars{paramsCount} // Reserve enough space for the parameters
+		, vars{def.paramsCount} // Reserve enough space for the parameters
 		, params{ hn::SliceOf(std::as_const(vars), 0, def.paramsCount) }
 		, locals{ hn::SliceOf(std::as_const(vars), def.paramsCount, vars.size()) } {}
 };
+
+auto LuaFunctionDef::Invoke(StackFrame& stackFrame, LuaVariableStore& globalVars) const -> LuaFunctionDef::YieldResult {
+	//using LuaFunctionDef::NodeFunction;
+	//using LuaFunctionDef::Impl;
+
+	if (impl.index() != 0) {
+		return std::get<SystemFunction>(impl)(stackFrame.params);
+	}
+
+	auto& vars = stackFrame.vars;
+
+	while (true) {
+		auto& node = std::get<NodeFunction>(impl).get();
+		if (stackFrame.insCounter >= node.children.size()) {
+			return LUA_NIL;
+		}
+
+		auto& childNode = *node.children[stackFrame.insCounter];
+		switch (childNode.type) {
+			case ASTType::FUNCTION_CALL: {
+				auto& calleeName = std::get<std::string>(*childNode.children[0]->extraData);
+				// TODO local函数调用
+				//auto it = vars.find(calleeName);
+				//if (it == vars.end()) return LUA_NIL;
+				//auto& func = std::get<LuaFunctionDef>(it->second.val);
+
+				return FuncCall {
+					.calleeName = calleeName,
+					.params = [&]() {
+						auto params = std::vector<LuaValue>{};
+						for (auto it = childNode.children.begin() + 1 /* 跳过函数名节点 */; it < childNode.children.end(); ++it) {
+							auto& paramNode = *it; // std::unique_ptr<...>
+							params.push_back(LuaValue::Eval(*paramNode));
+						}
+						return params;
+					}(),
+				};
+			}
+			case ASTType::FUNCTION_DEFINITION: {
+				// TODO
+			}
+			case ASTType::VARIABLE_DECLARATION:
+			case ASTType::LOCAL_VARIABLE_DECLARATION: {
+				auto& storage = childNode.type == ASTType::LOCAL_VARIABLE_DECLARATION
+					? stackFrame.vars
+					: globalVars;
+
+				storage.insert({
+					// 变量名
+					std::get<std::string>(*childNode.children[0]->extraData),
+					// 内部储存的值（LuaValue）
+					LuaValue::Eval(*childNode.children[1]),
+				});
+				continue;
+			}
+			// TODO
+		}
+
+		++stackFrame.insCounter;
+	}
+	return LUA_NIL;
+}
 
 class Interpreter {
 private:
 	std::stack<StackFrame> callStack;
 	std::unordered_map<std::string_view, LuaFunctionDef> functionDefs;
 	LuaFunctionDef main;
+	/// `main`的StackFrame
+	StackFrame* global;
 	bool verbose;
 
 public:
@@ -167,35 +212,27 @@ public:
 		, verbose{ args["--verbose-execution"] == true }
 	{
 		callStack.push(StackFrame{"<main>", main});
+		global = &callStack.top();
 	}
 
 	auto Run() -> tl::expected<u32, RuntimeError> {
+
 		while (!callStack.empty()) {
 			auto& stackFrame = callStack.top();
 			auto& func = stackFrame.source.get();
 
-			bool finished = false;
-			std::visit(
+			bool finished = std::visit(
 				Overloaded {
-					[&](std::reference_wrapper<const ASTNode> nextFunc) {
-						// TODO locaj func
-						PushFuncCall(nextFunc.get());
-						finished = false;
+					[&](LuaFunctionDef::FuncCall&& funcCall) {
+						PushFuncCall(std::move(funcCall));
+						return false;
 				    },
-					[&](LuaFunctionDef::Source&& src) {
-						if (&func != &this->main) {
-							stackFrame.vars.push_back(LuaVariable::Wrap(std::move(src)));
-						} else {
-							DefineFunction(src.impl);
-						}
-						finished = false;
-					},
-					[&](LuaVariable&& ret) {
+					[&](LuaValue&& ret) {
 						ReturnFromFuncCall(std::move(ret));
-						finished = true;
+						return true;
 					}
 				},
-				func.Invoke(stackFrame.params, stackFrame.locals, &stackFrame.insCounter)
+				func.Invoke(stackFrame, global->vars)
 			);
 
 			if (finished) callStack.pop();
@@ -214,17 +251,33 @@ private:
 		functionDefs.insert({funcName, LuaFunctionDef{funcDefNode, paramsCount}});
 	}
 
-	auto PushFuncCall(const ASTNode& callerNode) -> void {
-		auto& calleeName = std::get<std::string>(*callerNode.children[0]->extraData);
-		auto it = functionDefs.find(calleeName);
-		if (it == functionDefs.end()) return;
-		auto& func = it->second;
+	auto PushFuncCall(LuaFunctionDef::FuncCall c) -> void {
+		auto it = global->vars.find(c.calleeName);
+		if (it == global->vars.end()) return;
+		auto& funcDef = std::get<LuaFunctionDef>(it->second.val);
 
-		callStack.push(StackFrame{calleeName, func});
+		auto stackFrame = StackFrame{c.calleeName, funcDef};
+
+		// FUNCTION_DEFINITION的第一个子节点是该函数的名字
+		// 第二个子节点才是FUNC_DEF_PARAMETER_LIST
+		auto& funcParamDefs = *funcDef.children[1]; // ASTType::FUNC_DEF_PARAMETER_LIST
+		usize i = 0;
+		for (auto&& param : c.params) {
+			auto& paramDefNode = *funcParamDefs.children[i]; // ASTType::FUNC_DEF_PARAMETER
+			auto& paramNameNode = *paramDefNode.children[0]; // ASTType::IDENTIFIER
+			auto& paramName = std::get<std::string>(paramNameNode.extraData); // const std::string&
+			stackFrame.vars.insert({
+				paramName,
+				std::move(param),
+			});
+			++i;
+		}
+
+		callStack.push(std::move(stackFrame));
 	}
 
-	auto ReturnFromFuncCall(LuaVariable ret) -> void {
-
+	auto ReturnFromFuncCall(LuaValue ret) -> void {
+		// TODO
 	}
 };
 }
