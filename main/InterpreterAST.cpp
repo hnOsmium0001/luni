@@ -5,6 +5,7 @@
 #include <vector>
 #include <unordered_map>
 #include <stack>
+#include <stdexcept>
 #include <tl/expected.hpp>
 #include <tsl/ordered_map.h>
 #include <hn/Slice.hpp>
@@ -50,6 +51,15 @@ public:
 };
 
 namespace SystemImpl {
+	usize MAX_PARAMS = 15;
+	std::vector<std::string> paramNames = []() {
+		std::vector<std::string> result{15};
+		for (usize i = 0; i < MAX_PARAMS; ++i) {
+			result.push_back(std::to_string(i));
+		}
+		return result;
+	}();
+
 	auto Print(SystemFunction::P params) -> LuaValue {
 		auto& text = std::any_cast<const std::string&>(params[0].second.val);
 		return LUA_NIL;
@@ -84,8 +94,7 @@ public:
 
 	struct FuncCall {
 		std::string_view calleeName;
-		/// 函数调用表达式所提供的所有参数，不足的将由Interpreter填充成LUA_NIL
-		/// 而多余的则会被直接扔掉
+		/// 函数调用表达式所提供的所有参数，不足的将由Interpreter填充成LUA_NIL，而多余的则会被直接扔掉
 		std::vector<LuaValue> params;
 	};
 	using YieldResult = std::variant<FuncCall, LuaValue>;
@@ -183,6 +192,9 @@ auto LuaFunctionDef::Invoke(StackFrame& stackFrame, LuaVariableStore& globalVars
 				continue;
 			}
 			// TODO
+			default: {
+				throw std::runtime_error("Illiegal AST node type in a function node!");
+			}
 		}
 
 		++stackFrame.insCounter;
@@ -216,7 +228,6 @@ public:
 	}
 
 	auto Run() -> tl::expected<u32, RuntimeError> {
-
 		while (!callStack.empty()) {
 			auto& stackFrame = callStack.top();
 			auto& func = stackFrame.source.get();
@@ -252,32 +263,60 @@ private:
 	}
 
 	auto PushFuncCall(LuaFunctionDef::FuncCall c) -> void {
-		auto it = global->vars.find(c.calleeName);
-		if (it == global->vars.end()) return;
-		auto& funcDef = std::get<LuaFunctionDef>(it->second.val);
+		auto funcDefOpt = LookupGlobalVariable<LuaFunctionDef>(c.calleeName);
+		if (!funcDefOpt) return;
+		auto& funcDef = *funcDefOpt;
 
 		auto stackFrame = StackFrame{c.calleeName, funcDef};
-
-		// FUNCTION_DEFINITION的第一个子节点是该函数的名字
-		// 第二个子节点才是FUNC_DEF_PARAMETER_LIST
-		auto& funcParamDefs = *funcDef.children[1]; // ASTType::FUNC_DEF_PARAMETER_LIST
-		usize i = 0;
-		for (auto&& param : c.params) {
-			auto& paramDefNode = *funcParamDefs.children[i]; // ASTType::FUNC_DEF_PARAMETER
-			auto& paramNameNode = *paramDefNode.children[0]; // ASTType::IDENTIFIER
-			auto& paramName = std::get<std::string>(paramNameNode.extraData); // const std::string&
-			stackFrame.vars.insert({
-				paramName,
-				std::move(param),
-			});
-			++i;
-		}
-
+		std::visit(
+			Overloaded {
+				[&](LuaFunctionDef::NodeFunction&& implRef) {
+					auto& impl = implRef.get();
+					// FUNCTION_DEFINITION的第一个子节点是该函数的名字
+					// 第二个子节点才是FUNC_DEF_PARAMETER_LIST
+					auto& funcParamDefs = *impl.children[1]; // ASTType::FUNC_DEF_PARAMETER_LIST
+					usize i = 0;
+					for (auto&& param : c.params) {
+						auto& paramDefNode = *funcParamDefs.children[i]; // ASTType::FUNC_DEF_PARAMETER
+						auto& paramNameNode = *paramDefNode.children[0]; // ASTType::IDENTIFIER
+						auto& paramName = std::get<std::string>(*paramNameNode.extraData); // const std::string&
+						stackFrame.vars.insert({
+							paramName,
+							std::move(param),
+						});
+						++i;
+					}
+				},
+				[&](SystemFunction&& impl) {
+					for (usize i = 0; i < c.params.size(); ++i) {
+						stackFrame.vars.insert({
+							SystemImpl::paramNames[i],
+							std::move(c.params[i]),
+						});
+					}
+				}
+			},
+			funcDef.impl
+		);
 		callStack.push(std::move(stackFrame));
 	}
 
 	auto ReturnFromFuncCall(LuaValue ret) -> void {
 		// TODO
+	}
+
+	/// 尝试在全局变量空间里匹配一个拥有`name`和类型`Result`的变量
+	/// 如果成功则返回指向该变量的指针
+	/// 否则返回nullptr
+	template <typename Result>
+	auto LookupGlobalVariable(std::string_view name) -> Result* {
+		auto it = global->vars.find(name);
+		if (it == global->vars.end()) return nullptr;
+		
+		// std::any_cast有个针对指针的noexcept重载。带指针版本的any_cast会在类型不匹配时
+		// 返回空指针而不会抛异常
+		std::any* a = &it->second.val;
+		return std::any_cast<Result>(a);
 	}
 };
 }
