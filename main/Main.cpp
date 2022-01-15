@@ -1,12 +1,13 @@
+#include "Util.hpp"
+#include "Program.hpp"
+#include "Parser.hpp"
+#include "Interpreter.hpp"
+
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <tl/expected.hpp>
 #include <argparse/argparse.hpp>
-#include "Util.hpp"
-#include "Program.hpp"
-#include "Parser.hpp"
-#include "Interpreter.hpp"
 
 using LuNI::Fmap;
 using LuNI::operator|;

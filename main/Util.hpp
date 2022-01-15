@@ -2,14 +2,36 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <optional>
 #include <stdexcept>
 #include <string>
-#include <vector>
-#include <utility>
-#include <optional>
-#include <variant>
-#include <functional>
 #include <type_traits>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#define STRINGIFY_IMPL(text) #text
+#define STRINGIFY(text) STRINGIFY_IMPL(text)
+
+#define CONCAT_IMPL(a, b) a##b
+#define CONCAT(a, b) CONCAT_IMPL(a, b)
+#define CONCAT_3(a, b, c) CONCAT(a, CONCAT(b, c))
+#define CONCAT_4(a, b, c, d) CONCAT(CONCAT(a, b), CONCAT(c, d))
+
+#define UNIQUE_NAME(prefix) CONCAT(prefix, __COUNTER__)
+#define UNIQUE_NAME_LINE(prefix) CONCAT(prefix, __LINE__)
+#define DISCARD UNIQUE_NAME(_discard)
+
+#define UNUSED(x) (void)x;
+
+#if defined(_MSC_VER)
+#	define UNREACHABLE __assume(0)
+#elif defined(__GNUC__) || defined(__clang__)
+#	define UNREACHABLE __builtin_unreachable()
+#else
+#	define UNREACHABLE
+#endif
 
 using u8 = uint8_t;
 using u16 = uint16_t;
@@ -25,75 +47,10 @@ using usize = size_t;
 
 namespace LuNI {
 
-template <class T, class Func>
-auto operator|(const std::optional<T>& opt, Func&& func) -> std::optional<decltype(func(*opt))> {
-	return opt ? func(*opt) : std::nullopt;
-}
-template <class Func, class... Ts>
-auto Fmap(Func&& func, const std::optional<Ts>&... opts) -> std::optional<decltype(func((*opts)...))> {
-	return (... && opts) ? func((*opts)...) : std::nullopt;
-}
+template <class... Ts>
+struct Overloaded : Ts... { using Ts::operator()...; };
 
-template <class T, class Func>
-auto operator>>(const std::optional<T>& opt, Func&& func) -> decltype(func(*opt)) {
-	return opt ? func(*opt) : std::nullopt;
-}
-template <class Func, class... Ts>
-auto Bind(Func&& func, const std::optional<Ts>&... opts) -> decltype(func((*opts)...)) {
-	return (... && opts) ? func((*opts)...) : std::nullopt;
-}
-
-template <class... Ts> struct Overloaded : Ts... { using Ts::operator()...; };
-template <class... Ts> Overloaded(Ts...) -> Overloaded<Ts...>;
-
-template <class F>
-class ScopeGuard {
-private:
-	F function;
-	bool cancelled = false;
-
-public:
-	ScopeGuard() = delete;
-	explicit ScopeGuard(F&& function) noexcept
-		: function{ std::move(function) } {
-	}
-	ScopeGuard(const ScopeGuard&) = delete;
-	ScopeGuard& operator=(const ScopeGuard&) = delete;
-	ScopeGuard(ScopeGuard&& that)
-		: function{ std::move(that.function) } {
-		that.Cancel();
-	}
-	ScopeGuard& operator=(ScopeGuard&& that) {
-		this->function = std::move(that.function);
-		that.Cancel();
-	}
-	~ScopeGuard() noexcept {
-		if (!cancelled) {
-			function();
-		}
-	}
-
-	auto Cancel() -> void { this->cancelled = true; }
-};
-
-// Parser/Lexer错误，包含错误ID和信息
-struct StandardError {
-	u32 id;
-	std::string msg;
-};
-
-/// 解释器运行时错误
-struct RuntimeError {
-	// TODO stacktrace
-};
-
-namespace ErrorCodes {
-	constexpr u32 INPUT_FILE_NOT_FOUND = 0;
-
-	constexpr u32 PARSER_EXPECTED_IDENTIFIER = 100;
-	constexpr u32 PARSER_EXPECTED_OPERATOR = 101;
-	// TODO
-} // namespace ErrorCodes
+template <class... Ts>
+Overloaded(Ts...) -> Overloaded<Ts...>;
 
 } // namespace LuNI
-

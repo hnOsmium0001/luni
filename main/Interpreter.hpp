@@ -1,8 +1,9 @@
 #pragma once
 
-#include <argparse/argparse.hpp>
 #include "Program.hpp"
 #include "Parser.hpp"
+
+#include <argparse/argparse.hpp>
 
 namespace LuNI {
 

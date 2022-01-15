@@ -1,10 +1,14 @@
-#include <utility>
-#include <functional>
+#include "Lexer.hpp"
+
+#include <fmt/format.h>
+#include <spdlog/spdlog.h>
 #include <algorithm>
+#include <functional>
+#include <magic_enum.hpp>
 #include <regex>
-#include <unordered_set>
 #include <stdexcept>
-#include "Parser.hpp"
+#include <unordered_set>
+#include <utility>
 
 using namespace LuNI;
 
@@ -23,7 +27,7 @@ auto LuNI::NormalizeTokenType(TokenType type) -> TokenType {
 	}
 }
 
-auto LuNI::Format(TokenType type) -> std::string_view {
+auto LuNI::StringifyTokenType(TokenType type) -> std::string_view {
 	switch (type) {
 		case TokenType::KEYWORD_AND: return "and";
 		case TokenType::KEYWORD_BREAK: return "break";
@@ -90,15 +94,16 @@ namespace {
 class LexingState {
 public:
 	std::vector<Token> tokens;
+
 private:
-	std::reference_wrapper<const std::string> src;
+	const std::string* src;
 	std::string::const_iterator ptr;
 	u32 currentLine = 1;
 	u32 currentColumn = 1;
 
 public:
 	LexingState(const std::string& src) noexcept
-		: src{ std::cref(src) }, ptr{ src.cbegin() } {
+		: src{ &src }, ptr{ src.cbegin() } {
 	}
 
 	LexingState(const LexingState&) = delete;
@@ -107,8 +112,7 @@ public:
 	LexingState& operator=(LexingState&&) = default;
 
 	auto HasNext() const -> bool {
-		auto& src = this->src.get();
-		return ptr != src.cend();
+		return ptr != src->cend();
 	}
 
 	auto Peek(usize offset = 0) const -> std::optional<char> {
@@ -119,12 +123,11 @@ public:
 
 	auto PeekSome(usize chars, usize offset = 0) const -> std::optional<std::string_view> {
 		if (!HasNext()) return {};
-		auto& src = this->src.get();
 		auto ptr = this->ptr + offset;
 
 		// 从std::string::const_iterator::difference_type强制装换成usize
 		// 不知为何std::distance模板参数推导失败，得显示声明模板参数才行
-		usize dist = std::distance<std::string::const_iterator>(ptr, src.cend());
+		usize dist = std::distance<std::string::const_iterator>(ptr, src->cend());
 		auto charsClamped = std::min(dist, chars);
 		return std::string_view(&*ptr, charsClamped);
 	}
@@ -145,8 +148,7 @@ public:
 
 	auto TakeSome(usize chars) -> std::optional<std::string_view> {
 		if (!HasNext()) return {};
-		auto& src = this->src.get();
-		usize dist = std::distance(ptr, src.cend());
+		usize dist = std::distance(ptr, src->cend());
 		auto charsClamped = std::min(dist, chars);
 
 		// 将std::string::iterator转换为指针
@@ -183,8 +185,7 @@ public:
 	}
 
 	auto Advance(usize chars) -> usize {
-		auto& src = this->src.get();
-		usize dist = std::distance(ptr, src.cend());
+		usize dist = std::distance(ptr, src->cend());
 		auto charsClamped = std::min(dist, chars);
 
 		// TODO optimize?
@@ -203,8 +204,7 @@ public:
 	}
 
 	auto Previous() -> bool {
-		auto& src = this->src.get();
-		if (ptr == src.cbegin()) {
+		if (ptr == src->cbegin()) {
 			return false;
 		} else {
 			--ptr;
@@ -220,8 +220,7 @@ public:
 	}
 
 	auto Previous(usize chars) -> usize {
-		auto& src = this->src.get();
-		usize dist = std::distance(src.cbegin(), ptr);
+		usize dist = std::distance(src->cbegin(), ptr);
 		auto charsClamped = std::min(dist, chars);
 
 		// TODO optimize?
@@ -250,10 +249,10 @@ public:
 	u32 line() const { return currentLine; }
 	u32 column() const { return currentColumn; }
 };
-}
+} // namespace
 
-static auto CurrentPosOf(const LexingState &state) -> TokenPos {
-	return TokenPos{state.line(), state.column()};
+static auto CurrentPosOf(const LexingState& state) -> TokenPos {
+	return TokenPos{ state.line(), state.column() };
 }
 
 // TODO 把上面那个巨型switch换成bimap
@@ -318,14 +317,10 @@ static const std::string_view blockCommentEnd = "--]]";
 
 static auto TryLexIdentifierOrKeyword(LexingState& state) -> std::optional<Token> {
 	auto beginning = state.Peek().value_or(' ');
-#ifdef LUNI_DEBUG_INFO
-	fmt::print("[Debug][Lexer.Iden] First char: '{}'\n", beginning);
-#endif // #ifdef LUNI_DEBUG_INFO
+	spdlog::trace("[Debug][Lexer.Iden] First char: '{}'\n", beginning);
 
-	if (!std::regex_match(std::string{beginning}, identifierBegin)) {
-#ifdef LUNI_DEBUG_INFO
-		fmt::print("[Debug][Lexer.Iden] First char cannot be a part of an identifier, returning\n");
-#endif // #ifdef LUNI_DEBUG_INFO
+	if (!std::regex_match(std::string{ beginning }, identifierBegin)) {
+		spdlog::trace("[Debug][Lexer.Iden] First char cannot be a part of an identifier, returning\n");
 		return {};
 	}
 	// 为了简化逻辑所以不直接使用Peek到的第一个字符，而是从头开始一个个地Take
@@ -338,23 +333,17 @@ static auto TryLexIdentifierOrKeyword(LexingState& state) -> std::optional<Token
 		auto opt = state.Take();
 		if (!opt) break;
 
-#ifdef LUNI_DEBUG_INFO
-	fmt::print("[Debug][Lexer.Iden] Fetched char: '{}'\n", *opt);
-#endif // #ifdef LUNI_DEBUG_INFO
+		spdlog::trace("[Debug][Lexer.Iden] Fetched char: '{}'\n", *opt);
 
-		if (!std::regex_match(std::string{*opt}, identifierAfter)) {
-#ifdef LUNI_DEBUG_INFO
-		fmt::print("[Debug][Lexer.Iden] Fetched char cannot be a part of an identifier, result: '{}'\n", buf);
-#endif // #ifdef LUNI_DEBUG_INFO
+		if (!std::regex_match(std::string{ *opt }, identifierAfter)) {
+			spdlog::trace("[Debug][Lexer.Iden] Fetched char cannot be a part of an identifier, result: '{}'\n", buf);
 
 			state.Previous();
 			break;
 		}
 
 		buf += *opt;
-#ifdef LUNI_DEBUG_INFO
-		fmt::print("[Debug][Lexer.Iden] Current buffer: '{}'\n", buf);
-#endif // #ifdef LUNI_DEBUG_INFO
+		spdlog::trace("[Debug][Lexer.Iden] Current buffer: '{}'\n", buf);
 	}
 
 	auto it = keywords.find(buf);
@@ -362,7 +351,7 @@ static auto TryLexIdentifierOrKeyword(LexingState& state) -> std::optional<Token
 		? TokenType::IDENTIFIER
 		: it->second;
 
-	return Token{std::move(buf), std::move(pos), type};
+	return Token{ std::move(buf), std::move(pos), type };
 }
 
 static auto TryLexOperator(LexingState& state) -> std::optional<Token> {
@@ -374,9 +363,7 @@ static auto TryLexOperator(LexingState& state) -> std::optional<Token> {
 		if (!opt) return {};
 		auto view = *opt;
 
-#ifdef LUNI_DEBUG_INFO
-		fmt::print("[Debug][Lexer.Oper] Matching length {}, input: '{}'\n", n, view);
-#endif // #ifdef LUNI_DEBUG_INFO
+		spdlog::trace("[Debug][Lexer.Oper] Matching length {}, input: '{}'\n", n, view);
 
 		auto it = operators.find(view);
 		if (it != operators.end()) {
@@ -384,23 +371,17 @@ static auto TryLexOperator(LexingState& state) -> std::optional<Token> {
 				continue;
 			}
 
-#ifdef LUNI_DEBUG_INFO
-			fmt::print("[Debug][Lexer.Oper] Found matching operator '{}' with length {}\n", view, n);
-#endif // #ifdef LUNI_DEBUG_INFO
+			spdlog::trace("[Debug][Lexer.Oper] Found matching operator '{}' with length {}\n", view, n);
 
 			auto pos = CurrentPosOf(state);
 			state.Advance(n);
-			return Token{std::string{view}, std::move(pos), it->second};
+			return Token{ std::string{ view }, std::move(pos), it->second };
 		}
 
-#ifdef LUNI_DEBUG_INFO
-		fmt::print("[Debug][Lexer.Oper] No matching operator found with length {}\n", n);
-#endif // #ifdef LUNI_DEBUG_INFO
+		spdlog::trace("[Debug][Lexer.Oper] No matching operator found with length {}\n", n);
 	}
 
-#ifdef LUNI_DEBUG_INFO
-	fmt::print("[Debug][Lexer.Oper] No matching operator found with either lengths, aborting\n");
-#endif // #ifdef LUNI_DEBUG_INFO
+	spdlog::trace("[Debug][Lexer.Oper] No matching operator found with either lengths, aborting\n");
 	return {};
 }
 
@@ -411,21 +392,15 @@ static auto TryLexSimpleString(LexingState& state) -> std::string {
 		if (!opt) break;
 		auto c = *opt;
 
-#ifdef LUNI_DEBUG_INFO
-		fmt::print("[Debug][Lexer.Str] Fetched char '{}'\n", c);
-#endif // #ifdef LUNI_DEBUG_INFO
+		spdlog::trace("[Debug][Lexer.Str] Fetched char '{}'\n", c);
 
 		if (c == '"') {
-#ifdef LUNI_DEBUG_INFO
-			fmt::print("[Debug][Lexer.Str] Found string literal ending, result: '{}'\n", buf);
-#endif // #ifdef LUNI_DEBUG_INFO
+			spdlog::trace("[Debug][Lexer.Str] Found string literal ending, result: '{}'\n", buf);
 			break;
 		}
-		
+
 		buf += c;
-#ifdef LUNI_DEBUG_INFO
-		fmt::print("[Debug][Lexer.Str] Current buffer: '{}'\n", buf);
-#endif // #ifdef LUNI_DEBUG_INFO
+		spdlog::trace("[Debug][Lexer.Str] Current buffer: '{}'\n", buf);
 	}
 
 	return buf;
@@ -439,28 +414,22 @@ static auto TryLexMultilineString(LexingState& state) -> std::string {
 
 static auto TryLexString(LexingState& state) -> std::optional<Token> {
 	if (state.Peek().value_or(' ') == '"') {
-#ifdef LUNI_DEBUG_INFO
-	fmt::print("[Debug][Lexer.Str] Found string literal beginning\n");
-#endif // #ifdef LUNI_DEBUG_INFO
+		spdlog::trace("[Debug][Lexer.Str] Found string literal beginning\n");
 
 		state.Advance();
 		auto pos = CurrentPosOf(state);
-		return Token{TryLexSimpleString(state), std::move(pos), TokenType::STRING_LITERAL};
+		return Token{ TryLexSimpleString(state), std::move(pos), TokenType::STRING_LITERAL };
 	}
 
 	if (state.PeekSome(2).value_or("") == "[[") {
-#ifdef LUNI_DEBUG_INFO
-	fmt::print("[Debug][Lexer.Str] Found multiline string literal beginning\n");
-#endif // #ifdef LUNI_DEBUG_INFO
+		spdlog::trace("[Debug][Lexer.Str] Found multiline string literal beginning\n");
 
 		state.Advance(2);
 		auto pos = CurrentPosOf(state);
-		return Token{TryLexMultilineString(state), std::move(pos), TokenType::STRING_LITERAL};
+		return Token{ TryLexMultilineString(state), std::move(pos), TokenType::STRING_LITERAL };
 	}
 
-#ifdef LUNI_DEBUG_INFO
-	fmt::print("[Debug][Lexer.Str] No string literal beginning found\n");
-#endif // #ifdef LUNI_DEBUG_INFO
+	spdlog::trace("[Debug][Lexer.Str] No string literal beginning found\n");
 	return {};
 }
 
@@ -468,16 +437,12 @@ static auto TryLexString(LexingState& state) -> std::optional<Token> {
 static auto TryLexIntegerLiteral(LexingState& state) -> std::optional<Token> {
 	auto firstOpt = state.Peek();
 	if (!firstOpt) return {};
-	auto beginning = *firstOpt;
+	char beginning = *firstOpt;
 
-#ifdef LUNI_DEBUG_INFO
-	fmt::print("[Debug][Lexer.Int] First char: '{}'\n", first);
-#endif // #ifdef LUNI_DEBUG_INFO
+	spdlog::trace("[Debug][Lexer.Int] First char: '{}'\n", beginning);
 
-	if (!std::regex_match(std::string{beginning}, integerLiteral)) {
-#ifdef LUNI_DEBUG_INFO
-		fmt::print("[Debug][Lexer.Int] First char cannot be a part of an integer literal, returning\n");
-#endif // #ifdef LUNI_DEBUG_INFO
+	if (!std::regex_match(std::string{ beginning }, integerLiteral)) {
+		spdlog::trace("[Debug][Lexer.Int] First char cannot be a part of an integer literal, returning\n");
 		return {};
 	}
 
@@ -488,26 +453,20 @@ static auto TryLexIntegerLiteral(LexingState& state) -> std::optional<Token> {
 		auto opt = state.Take();
 		if (!opt) break;
 
-#ifdef LUNI_DEBUG_INFO
-		fmt::print("[Debug][Lexer.Int] Fetched char: '{}'\n", *opt);
-#endif // #ifdef LUNI_DEBUG_INFO
+		spdlog::trace("[Debug][Lexer.Int] Fetched char: '{}'\n", *opt);
 
-		if (!std::regex_match(std::string{*opt}, integerLiteral)) {
-#ifdef LUNI_DEBUG_INFO
-		fmt::print("[Debug][Lexer.Int] Fetched char cannot be a part of an integer literal, result: '{}'\n", buf);
-#endif // #ifdef LUNI_DEBUG_INFO
+		if (!std::regex_match(std::string{ *opt }, integerLiteral)) {
+			spdlog::trace("[Debug][Lexer.Int] Fetched char cannot be a part of an integer literal, result: '{}'\n", buf);
 
 			state.Previous();
 			break;
 		}
 
 		buf += *opt;
-#ifdef LUNI_DEBUG_INFO
-		fmt::print("[Debug][Lexer.Int] Current buffer: '{}'\n", buf);
-#endif // #ifdef LUNI_DEBUG_INFO
+		spdlog::trace("[Debug][Lexer.Int] Current buffer: '{}'\n", buf);
 	}
 
-	return Token{std::move(buf), std::move(pos), TokenType::INTEGER_LITERAL};
+	return Token{ std::move(buf), std::move(pos), TokenType::INTEGER_LITERAL };
 }
 
 static auto TryLexFloatingPointLiteral(LexingState& state) -> std::optional<Token> {
@@ -561,9 +520,7 @@ static auto TryLexComments(LexingState& state) -> std::optional<TokenPos> {
 
 	// block comment marks also starts with --
 	if (first2 != lineComment) {
-#ifdef LUNI_DEBUG_INFO
-	fmt::print("[Debug][Lexer.Comment] No comment beginning found\n");
-#endif // #ifdef LUNI_DEBUG_INFO
+		spdlog::trace("[Debug][Lexer.Comment] No comment beginning found\n");
 		return {};
 	}
 
@@ -573,85 +530,70 @@ static auto TryLexComments(LexingState& state) -> std::optional<TokenPos> {
 
 	auto next2 = state.PeekSome(2, 2);
 	if (next2 && *next2 == "[[") {
-#ifdef LUNI_DEBUG_INFO
-	fmt::print("[Debug][Lexer.Comment] Found multiline comment beginning\n");
-#endif // #ifdef LUNI_DEBUG_INFO
+		spdlog::trace("[Debug][Lexer.Comment] Found multiline comment beginning\n");
 
 		state.Advance(2);
 		TryLexMultilineComment(state);
 	} else {
-#ifdef LUNI_DEBUG_INFO
-	fmt::print("[Debug][Lexer.Comment] Found line comment beginning\n");
-#endif // #ifdef LUNI_DEBUG_INFO
+		spdlog::trace("[Debug][Lexer.Comment] Found line comment beginning\n");
 
 		TryLexLineComment(state);
 	}
 	return pos;
 }
 
-auto LuNI::DoLexing(
-	argparse::ArgumentParser& args,
-	const std::string& text
-) -> std::vector<Token> {
+auto LuNI::DoLexing(argparse::ArgumentParser& args, const std::string& text) -> std::vector<Token> {
 	auto verbose = args["--verbose-lexing"] == true;
 
-	LexingState state{text};
+	LexingState state{ text };
 	while (state.HasNext()) {
 		auto iden = TryLexIdentifierOrKeyword(state);
 		if (iden) {
-			if (verbose) {
-				fmt::print("[Lexer] Generated {} token '{}'\n", iden->type, iden->text);
-				fmt::print("\tstarting at {}\n", iden->pos);
-			}
+			spdlog::info("[Lexer] Generated {} token '{}'\n", magic_enum::enum_name(iden->type), iden->text);
+			spdlog::info("\tstarting at {}\n", iden->pos);
 			state.AddToken(std::move(*iden));
 			continue;
 		}
 
 		auto str = TryLexString(state);
 		if (str) {
-			if (verbose) {
-				fmt::print("[Lexer] Generated string literal token '{}'\n", str->text);
-				fmt::print("\tstarting at {}\n", str->pos);
-			}
+			spdlog::info("[Lexer] Generated string literal token '{}'\n", str->text);
+			spdlog::info("\tstarting at {}\n", str->pos);
 			state.AddToken(std::move(*str));
 			continue;
 		}
 
 		auto commentPos = TryLexComments(state);
 		if (commentPos) {
-			if (verbose) {
-				fmt::print("[Lexer] Discarded comments starting at {}\n", *commentPos);
-			}
+			spdlog::info("[Lexer] Discarded comments starting at {}\n", *commentPos);
 			continue;
 		}
 
 		auto oper = TryLexOperator(state);
 		if (oper) {
-			if (verbose) {
-				fmt::print("[Lexer] Generated operator token '{}'\n", oper->text);
-				fmt::print("\tstarting at {}\n", oper->pos);
-			}
+			spdlog::info("[Lexer] Generated operator token '{}'\n", oper->text);
+			spdlog::info("\tstarting at {}\n", oper->pos);
 			state.AddToken(std::move(*oper));
 			continue;
 		}
 
 		auto nextChar = state.Peek().value_or('\0');
 		if (std::isspace(nextChar)) {
-			/*
+#if 0
 			auto hasWhitepsace = state.GetLastToken().type == TokenType::WHITESPACE;
 			// 因为AST生成器会检查换行符（“\n”），所以必须保留所有的换行符
 			// 为了简化AST生成器的逻辑（不需要处处检查并吞掉空白符），其他的空白符就不保留了
 			// 只要能够正常分离不同的token就行了
 			if (nextChar != '\n') {
-				if (verbose) fmt::print("Discarded whitespace at {}\n", CurrentPosOf(state));
+				spdlog::info("Discarded whitespace at {}\n", CurrentPosOf(state));
 			} else if (!hasWhitepsace) {
 				// 同样是为了简化AST生成器的工作，只保留一个换行符
 				auto currentPos = CurrentPosOf(state);
-				if (verbose) fmt::print("Generated whitespace token at {}\n", currentPos);
+				spdlog::info("Generated whitespace token at {}\n", currentPos);
 				state.AddToken(Token{std::string{nextChar}, currentPos, TokenType::WHITESPACE});
 			}
-			*/
-			fmt::print("[Lexer] Discarded whitespace at {}\n", CurrentPosOf(state));
+#endif
+			spdlog::info("[Lexer] Discarded whitespace at {}\n", CurrentPosOf(state));
 			state.Advance();
 			continue;
 		}

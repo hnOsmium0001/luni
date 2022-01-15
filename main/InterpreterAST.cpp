@@ -8,7 +8,6 @@
 #include <stdexcept>
 #include <tl/expected.hpp>
 #include <tsl/ordered_map.h>
-#include <hn/Slice.hpp>
 #include "Util.hpp"
 #include "Parser.hpp"
 #include "Interpreter.hpp"

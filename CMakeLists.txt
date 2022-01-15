@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.0)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -19,14 +19,11 @@ include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
 conan_basic_setup()
 
 add_executable(luni
-	main/Util.hpp
 	main/Util.cpp
-	main/Program.hpp
+	main/AstNode.cpp
 	main/Program.cpp
-	main/Parser.hpp
-	main/ParserLex.cpp
-	main/ParserAST.cpp
-	main/Interpreter.hpp
+	main/Lexer.cpp
+	main/Parser.cpp
 	main/InterpreterAST.cpp
 	main/InterpreterBytecode.cpp
 	main/Main.cpp
